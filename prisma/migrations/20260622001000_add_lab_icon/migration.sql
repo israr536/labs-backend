@@ -1,0 +1,1 @@
+ALTER TABLE "Lab" ADD COLUMN "icon" TEXT;

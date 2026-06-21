@@ -7,10 +7,177 @@ datasource db {
   provider = "postgresql"
 }
 
-model Patient {
-  id        Int      @id @default(autoincrement())
-  name      String
-  age       Int
-  phone     String?
+enum UserRole {
+  ADMIN
+  TECHNICIAN
+  RECEPTIONIST
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum ReportStatus {
+  DRAFT
+  FINAL
+}
+
+enum ResultFlag {
+  LOW
+  NORMAL
+  HIGH
+}
+
+enum ParameterInputType {
+  NUMBER
+  TEXT
+  SELECT
+}
+
+model Lab {
+  id                  String    @id @default(uuid())
+  code                String    @unique
+  name                String
+  mobile              String
+  email               String?
+  address             String?
+  icon                String?
+  isActive            Boolean   @default(true)
+  subscriptionPlan    String?
+  subscriptionStartAt DateTime?
+  subscriptionEndAt   DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  patients Patient[]
+  reports  Report[]
+  tests    Test[]
+  users    User[]
+}
+
+model User {
+  id        String   @id @default(uuid())
+  labId     String
+  username  String   @unique
+  mobile    String
+  email     String?
+  password  String
+  role      UserRole
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lab           Lab            @relation(fields: [labId], references: [id])
+  createdReports Report[]      @relation("ReportCreatedBy")
+  refreshTokens RefreshToken[]
+
+  @@index([labId])
+}
+
+model Patient {
+  id          String    @id @default(uuid())
+  labId       String
+  name        String
+  dateOfBirth DateTime?
+  age         Int?
+  gender      Gender
+  mobile      String?
+  address     String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  lab     Lab      @relation(fields: [labId], references: [id])
+  reports Report[]
+
+  @@index([labId])
+}
+
+model Test {
+  id        String   @id @default(uuid())
+  labId     String
+  name      String
+  category  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lab        Lab             @relation(fields: [labId], references: [id])
+  parameters TestParameter[]
+  reports    Report[]
+
+  @@index([labId])
+}
+
+model TestParameter {
+  id           String             @id @default(uuid())
+  testId       String
+  name         String
+  inputType    ParameterInputType @default(NUMBER)
+  unit         String?
+  normalMin    Float?
+  normalMax    Float?
+  displayOrder Int                @default(0)
+  isRequired   Boolean            @default(true)
+  createdAt    DateTime           @default(now())
+
+  test    Test           @relation(fields: [testId], references: [id], onDelete: Cascade)
+  results ReportResult[]
+
+  @@index([testId])
+}
+
+model Report {
+  id          String       @id @default(uuid())
+  labId       String
+  patientId   String
+  testId      String
+  reportNumber String     @unique
+  createdById String
+  status      ReportStatus @default(DRAFT)
+  remarks     String?
+  doctorNotes String?
+  approvedBy  String?
+  reportedAt  DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  createdBy User           @relation("ReportCreatedBy", fields: [createdById], references: [id])
+  lab       Lab            @relation(fields: [labId], references: [id])
+  patient   Patient        @relation(fields: [patientId], references: [id])
+  results   ReportResult[]
+  test      Test           @relation(fields: [testId], references: [id])
+
+  @@index([labId])
+  @@index([patientId])
+  @@index([testId])
+}
+
+model ReportResult {
+  id          String      @id @default(uuid())
+  reportId    String
+  parameterId String
+  value       String
+  flag        ResultFlag?
+  createdAt   DateTime    @default(now())
+
+  parameter TestParameter @relation(fields: [parameterId], references: [id])
+  report    Report        @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@unique([reportId, parameterId])
+  @@index([parameterId])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
 }
