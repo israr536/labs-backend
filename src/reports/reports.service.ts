@@ -8,7 +8,7 @@ import {
   ReportStatus,
   ResultFlag,
   TestParameter,
-} from '../../generated/prisma/client';
+} from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import {
   arrayValue,

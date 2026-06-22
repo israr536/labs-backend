@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { UserRole } from '../../generated/prisma/client';
+import { UserRole } from '@prisma/client';
 import {
   enumValue,
   optionalBoolean,

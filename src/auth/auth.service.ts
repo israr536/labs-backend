@@ -3,7 +3,7 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { User, UserRole } from '../../generated/prisma/client';
+import { User, UserRole } from '@prisma/client';
 import {
   optionalDate,
   optionalString,

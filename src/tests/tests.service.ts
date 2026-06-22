@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ParameterInputType } from '../../generated/prisma/client';
+import { ParameterInputType } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import {
   arrayValue,

@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Gender } from '../../generated/prisma/client';
+import { Gender } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import {
   enumValue,
