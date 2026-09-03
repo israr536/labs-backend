@@ -54,6 +54,18 @@ enum SampleStatus {
   REJECTED
 }
 
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  VERIFY
+  FINALIZE
+  AMEND
+  LOGIN
+  LOGOUT
+  DOWNLOAD
+}
+
 model Lab {
   id                  String    @id @default(uuid())
   code                String    @unique
@@ -76,6 +88,7 @@ model Lab {
   orders   LabOrder[]
   samples  Sample[]
   finalReports FinalReport[]
+  auditLogs AuditLog[]
 }
 
 model User {
@@ -96,6 +109,8 @@ model User {
   createdOrders  LabOrder[]     @relation("OrderCreatedBy")
   verifiedResults OrderResult[] @relation("OrderResultVerifiedBy")
   finalizedReports FinalReport[] @relation("FinalReportFinalizedBy")
+  auditLogs AuditLog[] @relation("AuditActor")
+  finalReportVersions FinalReportVersion[] @relation("VersionCreatedBy")
 
   @@index([labId])
 }
@@ -308,6 +323,7 @@ model FinalReport {
   reportNumber  String   @unique
   finalizedById String
   snapshot      Json
+  currentVersion Int     @default(1)
   finalizedAt   DateTime @default(now())
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -315,8 +331,45 @@ model FinalReport {
   lab         Lab      @relation(fields: [labId], references: [id])
   order       LabOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
   finalizedBy User     @relation("FinalReportFinalizedBy", fields: [finalizedById], references: [id])
+  versions    FinalReportVersion[]
 
   @@index([labId, finalizedAt])
+}
+
+model FinalReportVersion {
+  id            String   @id @default(uuid())
+  finalReportId String
+  version       Int
+  snapshot      Json
+  amendmentReason String
+  createdById   String
+  createdAt     DateTime @default(now())
+
+  finalReport FinalReport @relation(fields: [finalReportId], references: [id], onDelete: Cascade)
+  createdBy   User        @relation("VersionCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([finalReportId, version])
+  @@index([createdById])
+}
+
+model AuditLog {
+  id         String      @id @default(uuid())
+  labId      String
+  actorId    String?
+  action     AuditAction
+  entity     String
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime    @default(now())
+
+  lab   Lab   @relation(fields: [labId], references: [id], onDelete: Cascade)
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([labId, createdAt])
+  @@index([labId, entity, entityId])
+  @@index([actorId])
 }
 
 model RefreshToken {
