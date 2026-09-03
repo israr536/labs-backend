@@ -1,0 +1,415 @@
+{
+  "department": "Hematology",
+  "batch": "Routine Hematology",
+  "tests": [
+    {
+      "code": "HEM001",
+      "shortName": "CBC",
+      "name": "Complete Blood Count",
+      "category": "Routine Hematology",
+      "department": "Hematology",
+      "sampleType": "Whole Blood",
+      "method": "Automated Hematology Analyzer",
+      "tat": 6,
+      "parameters": [
+        {
+          "name": "Hemoglobin",
+          "inputType": "NUMBER",
+          "unit": "g/dL",
+          "normalMin": 13.5,
+          "normalMax": 17.5,
+          "referenceRange": {
+            "MALE": "13.5-17.5",
+            "FEMALE": "12-15.5"
+          },
+          "displayOrder": 1
+        },
+        {
+          "name": "Total Leukocyte Count",
+          "inputType": "NUMBER",
+          "unit": "cells/cumm",
+          "normalMin": 4000,
+          "normalMax": 11000,
+          "displayOrder": 2
+        },
+        {
+          "name": "RBC Count",
+          "inputType": "NUMBER",
+          "unit": "million/cumm",
+          "referenceRange": {
+            "MALE": "4.5-5.9",
+            "FEMALE": "4.1-5.1"
+          },
+          "displayOrder": 3
+        },
+        {
+          "name": "Platelet Count",
+          "inputType": "NUMBER",
+          "unit": "lakhs/cumm",
+          "normalMin": 1.5,
+          "normalMax": 4.5,
+          "displayOrder": 4
+        },
+        {
+          "name": "Packed Cell Volume",
+          "inputType": "NUMBER",
+          "unit": "%",
+          "normalMin": 36,
+          "normalMax": 50,
+          "displayOrder": 5
+        },
+        {
+          "name": "MCV",
+          "inputType": "NUMBER",
+          "unit": "fL",
+          "normalMin": 80,
+          "normalMax": 100,
+          "displayOrder": 6
+        },
+        {
+          "name": "MCH",
+          "inputType": "NUMBER",
+          "unit": "pg",
+          "normalMin": 27,
+          "normalMax": 33,
+          "displayOrder": 7
+        },
+        {
+          "name": "MCHC",
+          "inputType": "NUMBER",
+          "unit": "g/dL",
+          "normalMin": 32,
+          "normalMax": 36,
+          "displayOrder": 8
+        },
+        {
+          "name": "RDW-CV",
+          "inputType": "NUMBER",
+          "unit": "%",
+          "normalMin": 11.5,
+          "normalMax": 14.5,
+          "displayOrder": 9
+        }
+      ]
+    },
+
+    {
+      "code": "HEM002",
+      "shortName": "HB",
+      "name": "Hemoglobin",
+      "category": "RBC Investigation",
+      "department": "Hematology",
+      "sampleType": "Whole Blood",
+      "method": "Photometric Method",
+      "tat": 4,
+      "parameters": [
+        {
+          "name": "Hemoglobin Level",
+          "inputType": "NUMBER",
+          "unit": "g/dL",
+          "normalMin": 13.5,
+          "normalMax": 17.5,
+          "displayOrder": 1
+        }
+      ]
+    },
+
+    {
+      "code": "HEM003",
+      "shortName": "RBC",
+      "name": "Red Blood Cell Count",
+      "category": "RBC Investigation",
+      "department": "Hematology",
+      "sampleType": "Whole Blood",
+      "method": "Automated Analyzer",
+      "tat": 4,
+      "parameters": [
+        {
+          "name": "RBC Count",
+          "inputType": "NUMBER",
+          "unit": "million/cumm",
+          "normalMin": 4.5,
+          "normalMax": 5.9,
+          "displayOrder": 1
+        }
+      ]
+    },
+
+    {
+      "code": "HEM004",
+      "shortName": "WBC",
+      "name": "Total Leukocyte Count",
+      "category": "WBC Investigation",
+      "department": "Hematology",
+      "sampleType": "Whole Blood",
+      "method": "Automated Analyzer",
+      "tat": 4,
+      "parameters": [
+        {
+          "name": "Total WBC Count",
+          "inputType": "NUMBER",
+          "unit": "cells/cumm",
+          "normalMin": 4000,
+          "normalMax": 11000,
+          "displayOrder": 1
+        }
+      ]
+    },
+
+    {
+      "code": "HEM005",
+      "shortName": "DC",
+      "name": "Differential Leukocyte Count",
+      "category": "WBC Investigation",
+      "department": "Hematology",
+      "sampleType": "Whole Blood",
+      "method": "Microscopy",
+      "tat": 6,
+      "parameters": [
+        {
+          "name": "Neutrophils",
+          "inputType": "NUMBER",
+          "unit": "%",
+          "normalMin": 40,
+          "normalMax": 75,
+          "displayOrder": 1
+        },
+        {
+          "name": "Lymphocytes",
+          "inputType": "NUMBER",
+          "unit": "%",
+          "normalMin": 20,
+          "normalMax": 45,
+          "displayOrder": 2
+        },
+        {
+          "name": "Eosinophils",
+          "inputType": "NUMBER",
+          "unit": "%",
+          "normalMin": 1,
+          "normalMax": 6,
+          "displayOrder": 3
+        },
+        {
+          "name": "Monocytes",
+          "inputType": "NUMBER",
+          "unit": "%",
+          "normalMin": 2,
+          "normalMax": 10,
+          "displayOrder": 4
+        },
+        {
+          "name": "Basophils",
+          "inputType": "NUMBER",
+          "unit": "%",
+          "normalMin": 0,
+          "normalMax": 2,
+          "displayOrder": 5
+        },
+          {
+    "code": "HEM006",
+    "shortName": "PLT",
+    "name": "Platelet Count",
+    "category": "Platelet Investigation",
+    "department": "Hematology",
+    "sampleType": "Whole Blood",
+    "method": "Automated Hematology Analyzer",
+    "tat": 4,
+    "parameters": [
+      {
+        "name": "Platelet Count",
+        "inputType": "NUMBER",
+        "unit": "lakhs/cumm",
+        "normalMin": 1.5,
+        "normalMax": 4.5,
+        "displayOrder": 1
+      }
+    ]
+  },
+  {
+    "code": "HEM007",
+    "shortName": "MPV",
+    "name": "Mean Platelet Volume",
+    "category": "Platelet Investigation",
+    "department": "Hematology",
+    "sampleType": "Whole Blood",
+    "method": "Automated Analyzer",
+    "tat": 4,
+    "parameters": [
+      {
+        "name": "MPV",
+        "inputType": "NUMBER",
+        "unit": "fL",
+        "normalMin": 7.5,
+        "normalMax": 11.5,
+        "displayOrder": 1
+      }
+    ]
+  },
+  {
+    "code": "HEM008",
+    "shortName": "PDW",
+    "name": "Platelet Distribution Width",
+    "category": "Platelet Investigation",
+    "department": "Hematology",
+    "sampleType": "Whole Blood",
+    "method": "Automated Analyzer",
+    "tat": 4,
+    "parameters": [
+      {
+        "name": "PDW",
+        "inputType": "NUMBER",
+        "unit": "%",
+        "normalMin": 9,
+        "normalMax": 17,
+        "displayOrder": 1
+      }
+    ]
+  },
+  {
+    "code": "HEM009",
+    "shortName": "PCT",
+    "name": "Plateletcrit",
+    "category": "Platelet Investigation",
+    "department": "Hematology",
+    "sampleType": "Whole Blood",
+    "method": "Automated Analyzer",
+    "tat": 4,
+    "parameters": [
+      {
+        "name": "Plateletcrit",
+        "inputType": "NUMBER",
+        "unit": "%",
+        "normalMin": 0.15,
+        "normalMax": 0.45,
+        "displayOrder": 1
+      }
+    ]
+  },
+  {
+    "code": "HEM010",
+    "shortName": "ESR",
+    "name": "Erythrocyte Sedimentation Rate",
+    "category": "Inflammation Marker",
+    "department": "Hematology",
+    "sampleType": "Whole Blood",
+    "method": "Westergren Method",
+    "tat": 6,
+    "parameters": [
+      {
+        "name": "ESR",
+        "inputType": "NUMBER",
+        "unit": "mm/hr",
+        "referenceRange": {
+          "MALE": "0-15",
+          "FEMALE": "0-20"
+        },
+        "displayOrder": 1
+      }
+    ]
+  },
+  {
+    "code": "HEM011",
+    "shortName": "ANC",
+    "name": "Absolute Neutrophil Count",
+    "category": "Absolute Cell Count",
+    "department": "Hematology",
+    "sampleType": "Whole Blood",
+    "method": "Calculated",
+    "tat": 4,
+    "parameters": [
+      {
+        "name": "Absolute Neutrophil Count",
+        "inputType": "NUMBER",
+        "unit": "cells/cumm",
+        "normalMin": 1500,
+        "normalMax": 8000,
+        "displayOrder": 1
+      }
+    ]
+  },
+  {
+    "code": "HEM012",
+    "shortName": "ALC",
+    "name": "Absolute Lymphocyte Count",
+    "category": "Absolute Cell Count",
+    "department": "Hematology",
+    "sampleType": "Whole Blood",
+    "method": "Calculated",
+    "tat": 4,
+    "parameters": [
+      {
+        "name": "Absolute Lymphocyte Count",
+        "inputType": "NUMBER",
+        "unit": "cells/cumm",
+        "normalMin": 1000,
+        "normalMax": 4000,
+        "displayOrder": 1
+      }
+    ]
+  },
+  {
+    "code": "HEM013",
+    "shortName": "AEC",
+    "name": "Absolute Eosinophil Count",
+    "category": "Absolute Cell Count",
+    "department": "Hematology",
+    "sampleType": "Whole Blood",
+    "method": "Calculated",
+    "tat": 4,
+    "parameters": [
+      {
+        "name": "Absolute Eosinophil Count",
+        "inputType": "NUMBER",
+        "unit": "cells/cumm",
+        "normalMin": 40,
+        "normalMax": 400,
+        "displayOrder": 1
+      }
+    ]
+  },
+  {
+    "code": "HEM014",
+    "shortName": "AMC",
+    "name": "Absolute Monocyte Count",
+    "category": "Absolute Cell Count",
+    "department": "Hematology",
+    "sampleType": "Whole Blood",
+    "method": "Calculated",
+    "tat": 4,
+    "parameters": [
+      {
+        "name": "Absolute Monocyte Count",
+        "inputType": "NUMBER",
+        "unit": "cells/cumm",
+        "normalMin": 200,
+        "normalMax": 800,
+        "displayOrder": 1
+      }
+    ]
+  },
+  {
+    "code": "HEM015",
+    "shortName": "ABC",
+    "name": "Absolute Basophil Count",
+    "category": "Absolute Cell Count",
+    "department": "Hematology",
+    "sampleType": "Whole Blood",
+    "method": "Calculated",
+    "tat": 4,
+    "parameters": [
+      {
+        "name": "Absolute Basophil Count",
+        "inputType": "NUMBER",
+        "unit": "cells/cumm",
+        "normalMin": 20,
+        "normalMax": 100,
+        "displayOrder": 1
+      }
+    ]
+  }
+      ]
+    }
+  ]
+  
+}

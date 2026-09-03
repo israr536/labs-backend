@@ -83,6 +83,7 @@ model Patient {
   age         Int?
   gender      Gender
   mobile      String?
+  email       String?
   address     String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -94,37 +95,73 @@ model Patient {
 }
 
 model Test {
-  id        String   @id @default(uuid())
-  labId     String
-  name      String
-  category  String?
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(uuid())
+  labId       String
 
-  lab        Lab             @relation(fields: [labId], references: [id])
-  parameters TestParameter[]
-  reports    Report[]
+  code        String
+  shortName   String?
+
+  name        String
+
+  category    String?
+  department  String?
+
+  sampleType  String?
+
+  price       Float?
+
+  tat         Int?
+
+  method      String?
+
+  remarks     String?
+
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lab         Lab             @relation(fields: [labId], references: [id])
+  parameters  TestParameter[]
+  reports     Report[]
 
   @@index([labId])
+  @@index([category])
+  @@index([department])
+  @@unique([labId, code])
 }
 
 model TestParameter {
-  id           String             @id @default(uuid())
-  testId       String
-  name         String
-  inputType    ParameterInputType @default(NUMBER)
-  unit         String?
-  normalMin    Float?
-  normalMax    Float?
-  displayOrder Int                @default(0)
-  isRequired   Boolean            @default(true)
-  createdAt    DateTime           @default(now())
+  id               String             @id @default(uuid())
+  testId           String
 
-  test    Test           @relation(fields: [testId], references: [id], onDelete: Cascade)
-  results ReportResult[]
+  name             String
+
+  inputType        ParameterInputType @default(NUMBER)
+
+  unit             String?
+
+  normalMin        Float?
+  normalMax        Float?
+
+  referenceRange   Json?
+
+  options          Json?
+
+  displayOrder     Int                @default(0)
+
+  isRequired       Boolean            @default(true)
+
+  remarks          String?
+
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  test             Test               @relation(fields: [testId], references: [id], onDelete: Cascade)
+  results          ReportResult[]
 
   @@index([testId])
+  @@unique([testId, name])
 }
 
 model Report {
@@ -137,7 +174,9 @@ model Report {
   status      ReportStatus @default(DRAFT)
   remarks     String?
   doctorNotes String?
+  referredBy  String?
   approvedBy  String?
+  sampleCollectedAt DateTime?
   reportedAt  DateTime?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
@@ -179,4 +218,26 @@ model RefreshToken {
 
   @@unique([token])
   @@index([userId])
+}
+
+model PendingLabRegistration {
+  id                String   @id @default(uuid())
+  code              String
+  name              String
+  mobile            String
+  email             String?
+  address           String?
+  adminUsername     String
+  adminMobile       String
+  adminEmail        String?
+  adminPasswordHash String
+  otpHash           String
+  attempts          Int      @default(0)
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([code])
+  @@index([adminUsername])
+  @@index([expiresAt])
 }

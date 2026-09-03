@@ -1,9 +1,11 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import { User, UserRole } from '@prisma/client';
+import { randomInt } from 'node:crypto';
 import {
   optionalDate,
   optionalString,
@@ -23,7 +25,6 @@ interface RegisterLabBody {
   subscriptionStartAt?: unknown;
   subscriptionEndAt?: unknown;
   admin?: {
-    username?: unknown;
     mobile?: unknown;
     email?: unknown;
     password?: unknown;
@@ -31,12 +32,19 @@ interface RegisterLabBody {
 }
 
 interface LoginBody {
-  username?: unknown;
+  email?: unknown;
   password?: unknown;
 }
 
 interface RefreshBody {
   refreshToken?: unknown;
+}
+
+interface RequestSignupOtpBody extends RegisterLabBody {}
+
+interface VerifySignupOtpBody {
+  requestId?: unknown;
+  otp?: unknown;
 }
 
 @Injectable()
@@ -52,7 +60,7 @@ export class AuthService {
     const labName = requiredString(body.name, 'name');
     const labCode =
       optionalString(body.code, 'code') ?? this.createLabCode(labName);
-    const adminUsername = requiredString(admin.username, 'admin.username');
+    const adminEmail = requiredString(admin.email, 'admin.email');
     const adminPassword = requiredString(admin.password, 'admin.password');
 
     if (adminPassword.length < 6) {
@@ -64,8 +72,13 @@ export class AuthService {
     const existingLab = await this.prisma.lab.findUnique({
       where: { code: labCode },
     });
-    const existingUser = await this.prisma.user.findUnique({
-      where: { username: adminUsername },
+    const existingUser = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { username: adminEmail },
+          { email: adminEmail },
+        ],
+      },
     });
 
     if (existingLab) {
@@ -73,7 +86,7 @@ export class AuthService {
     }
 
     if (existingUser) {
-      throw new ConflictException('Username already exists');
+      throw new ConflictException('Email already exists');
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
@@ -102,9 +115,9 @@ export class AuthService {
       const user = await tx.user.create({
         data: {
           labId: lab.id,
-          username: adminUsername,
+          username: adminEmail,
           mobile: requiredString(admin.mobile, 'admin.mobile'),
-          email: optionalString(admin.email, 'admin.email'),
+          email: adminEmail,
           password: this.passwordService.hash(adminPassword),
           role: UserRole.ADMIN,
         },
@@ -120,11 +133,172 @@ export class AuthService {
     };
   }
 
+  async requestSignupOtp(body: RequestSignupOtpBody) {
+    const admin = body.admin ?? {};
+    const labName = requiredString(body.name, 'name');
+    const labCode =
+      optionalString(body.code, 'code') ?? this.createLabCode(labName);
+    const adminEmail = requiredString(admin.email, 'admin.email');
+    const adminPassword = requiredString(admin.password, 'admin.password');
+    const adminMobile = requiredString(admin.mobile, 'admin.mobile');
+    const labMobile = requiredString(body.mobile, 'mobile');
+
+    if (adminPassword.length < 6) {
+      throw new ConflictException(
+        'admin.password must be at least 6 characters',
+      );
+    }
+
+    const [existingLab, existingUser] = await Promise.all([
+      this.prisma.lab.findUnique({ where: { code: labCode } }),
+      this.prisma.user.findFirst({
+        where: {
+          OR: [
+            { username: adminEmail },
+            { email: adminEmail },
+          ],
+        },
+      }),
+    ]);
+
+    if (existingLab) {
+      throw new ConflictException('Lab code already exists');
+    }
+
+    if (existingUser) {
+      throw new ConflictException('Email already exists');
+    }
+
+    await this.prisma.pendingLabRegistration.deleteMany({
+      where: {
+        OR: [{ code: labCode }, { adminUsername: adminEmail }],
+      },
+    });
+
+    const otp = String(randomInt(100000, 1000000));
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const pending = await this.prisma.pendingLabRegistration.create({
+      data: {
+        code: labCode,
+        name: labName,
+        mobile: labMobile,
+        email: optionalString(body.email, 'email'),
+        address: optionalString(body.address, 'address'),
+        adminUsername: adminEmail,
+        adminMobile,
+        adminEmail: optionalString(admin.email, 'admin.email') ?? adminEmail,
+        adminPasswordHash: this.passwordService.hash(adminPassword),
+        otpHash: this.passwordService.hash(otp),
+        expiresAt,
+      },
+      select: {
+        id: true,
+        expiresAt: true,
+      },
+    });
+
+    return {
+      requestId: pending.id,
+      expiresAt: pending.expiresAt,
+      delivery: admin.email ? 'email' : 'mobile',
+      ...(process.env.NODE_ENV === 'production' ? {} : { devOtp: otp }),
+    };
+  }
+
+  async verifySignupOtp(body: VerifySignupOtpBody) {
+    const requestId = requiredString(body.requestId, 'requestId');
+    const otp = requiredString(body.otp, 'otp');
+    const pending = await this.prisma.pendingLabRegistration.findUnique({
+      where: { id: requestId },
+    });
+
+    if (!pending) {
+      throw new BadRequestException('Signup request not found');
+    }
+
+    if (pending.expiresAt.getTime() < Date.now()) {
+      await this.prisma.pendingLabRegistration.delete({ where: { id: requestId } });
+      throw new BadRequestException('OTP expired. Please request a new OTP');
+    }
+
+    if (pending.attempts >= 5) {
+      await this.prisma.pendingLabRegistration.delete({ where: { id: requestId } });
+      throw new BadRequestException('Too many OTP attempts. Please try again');
+    }
+
+    if (!this.passwordService.verify(otp, pending.otpHash)) {
+      await this.prisma.pendingLabRegistration.update({
+        where: { id: requestId },
+        data: { attempts: { increment: 1 } },
+      });
+      throw new BadRequestException('Invalid OTP');
+    }
+
+    const [existingLab, existingUser] = await Promise.all([
+      this.prisma.lab.findUnique({ where: { code: pending.code } }),
+      this.prisma.user.findFirst({
+        where: {
+          OR: [
+            { username: pending.adminUsername },
+            { email: pending.adminEmail },
+          ],
+        },
+      }),
+    ]);
+
+    if (existingLab) {
+      throw new ConflictException('Lab code already exists');
+    }
+
+    if (existingUser) {
+      throw new ConflictException('Email already exists');
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const lab = await tx.lab.create({
+        data: {
+          code: pending.code,
+          name: pending.name,
+          mobile: pending.mobile,
+          email: pending.email,
+          address: pending.address,
+        },
+      });
+
+      const user = await tx.user.create({
+        data: {
+          labId: lab.id,
+          username: pending.adminEmail ?? pending.adminUsername,
+          mobile: pending.adminMobile,
+          email: pending.adminEmail ?? pending.adminUsername,
+          password: pending.adminPasswordHash,
+          role: UserRole.ADMIN,
+        },
+      });
+
+      await tx.pendingLabRegistration.delete({ where: { id: pending.id } });
+
+      return { lab, user };
+    });
+
+    return {
+      success: true,
+      lab: result.lab,
+      user: this.safeUser(result.user),
+      message: 'Signup completed. Please sign in with your new account.',
+    };
+  }
+
   async login(body: LoginBody) {
-    const username = requiredString(body.username, 'username');
+    const email = requiredString(body.email, 'email');
     const password = requiredString(body.password, 'password');
-    const user = await this.prisma.user.findUnique({
-      where: { username },
+    const user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { username: email },
+          { email: email },
+        ],
+      },
       include: { lab: true },
     });
 
@@ -134,7 +308,7 @@ export class AuthService {
       !user.lab.isActive ||
       !this.passwordService.verify(password, user.password)
     ) {
-      throw new UnauthorizedException('Invalid username or password');
+      throw new UnauthorizedException('Invalid email or password');
     }
 
     return {

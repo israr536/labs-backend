@@ -12,23 +12,30 @@ import {
 import { AuthUser } from '../auth/auth.types';
 import {
   arrayValue,
+  optionalDate,
   optionalEnumValue,
+  optionalInteger,
   optionalString,
   requiredString,
 } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
+import { PdfService } from './pdf.service';
 
 interface ReportBody {
   patientId?: unknown;
   testId?: unknown;
   remarks?: unknown;
   doctorNotes?: unknown;
+  referredBy?: unknown;
+  sampleCollectedAt?: unknown;
   results?: unknown;
 }
 
 interface UpdateReportBody {
   remarks?: unknown;
   doctorNotes?: unknown;
+  referredBy?: unknown;
+  sampleCollectedAt?: unknown;
   results?: unknown;
 }
 
@@ -37,9 +44,21 @@ interface ReportResultBody {
   value?: unknown;
 }
 
+interface FindAllOptions {
+  status?: string;
+  search?: string;
+  patientId?: string;
+  testId?: string;
+  skip?: string;
+  take?: string;
+}
+
 @Injectable()
 export class ReportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly pdfService: PdfService,
+  ) {}
 
   async create(currentUser: AuthUser, body: ReportBody) {
     const patientId = requiredString(body.patientId, 'patientId');
@@ -79,6 +98,11 @@ export class ReportsService {
         createdById: currentUser.id,
         remarks: optionalString(body.remarks, 'remarks'),
         doctorNotes: optionalString(body.doctorNotes, 'doctorNotes'),
+        referredBy: optionalString(body.referredBy, 'referredBy'),
+        sampleCollectedAt: optionalDate(
+          body.sampleCollectedAt,
+          'sampleCollectedAt',
+        ),
         results: results.length ? { create: results } : undefined,
       },
       include: this.reportInclude(),
@@ -87,18 +111,60 @@ export class ReportsService {
     return report;
   }
 
-  findAll(currentUser: AuthUser, status?: string) {
-    return this.prisma.report.findMany({
-      where: {
-        labId: currentUser.labId,
-        status: optionalEnumValue(ReportStatus, status, 'status'),
-      },
-      include: {
-        patient: true,
-        test: true,
-        createdBy: { select: this.userSelect() },
-      },
-      orderBy: { createdAt: 'desc' },
+  findAll(currentUser: AuthUser, options: FindAllOptions) {
+    const skip = optionalInteger(options.skip, 'skip') ?? 0;
+    const take = optionalInteger(options.take, 'take') ?? 20;
+    const status = optionalEnumValue(ReportStatus, options.status, 'status');
+    const search = optionalString(options.search, 'search');
+    const patientId = optionalString(options.patientId, 'patientId');
+    const testId = optionalString(options.testId, 'testId');
+
+    const where: any = {
+      labId: currentUser.labId,
+    };
+
+    if (status) {
+      where.status = status;
+    }
+
+    if (patientId) {
+      where.patientId = patientId;
+    }
+
+    if (testId) {
+      where.testId = testId;
+    }
+
+    if (search) {
+      where.OR = [
+        { reportNumber: { contains: search, mode: 'insensitive' as const } },
+        { patient: { name: { contains: search, mode: 'insensitive' as const } } },
+        { patient: { mobile: { contains: search, mode: 'insensitive' as const } } },
+        { remarks: { contains: search, mode: 'insensitive' as const } },
+      ];
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const [total, reports] = await Promise.all([
+        tx.report.count({ where }),
+        tx.report.findMany({
+          where,
+          include: this.reportInclude(),
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take,
+        }),
+      ]);
+
+      return {
+        data: reports,
+        pagination: {
+          total,
+          skip,
+          take,
+          pages: Math.ceil(total / take),
+        },
+      };
     });
   }
 
@@ -134,6 +200,11 @@ export class ReportsService {
         data: {
           remarks: optionalString(body.remarks, 'remarks'),
           doctorNotes: optionalString(body.doctorNotes, 'doctorNotes'),
+          referredBy: optionalString(body.referredBy, 'referredBy'),
+          sampleCollectedAt: optionalDate(
+            body.sampleCollectedAt,
+            'sampleCollectedAt',
+          ),
         },
       });
 
@@ -211,6 +282,8 @@ export class ReportsService {
         status: report.status,
         remarks: report.remarks,
         doctorNotes: report.doctorNotes,
+        referredBy: report.referredBy,
+        sampleCollectedAt: report.sampleCollectedAt,
         reportedAt: report.reportedAt,
         createdAt: report.createdAt,
       },
@@ -246,6 +319,15 @@ export class ReportsService {
         },
       },
     };
+  }
+
+  async generatePdf(currentUser: AuthUser, id: string): Promise<Buffer> {
+    const data = await this.generate(currentUser, id);
+    const html = this.pdfService.generateReportHtml(data);
+    
+    // Convert HTML to Buffer (for now, return as HTML that can be printed)
+    // In production, you might want to use a library like puppeteer for PDF generation
+    return Buffer.from(html, 'utf-8');
   }
 
   async remove(currentUser: AuthUser, id: string) {

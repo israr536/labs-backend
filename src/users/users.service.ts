@@ -16,7 +16,6 @@ import { PasswordService } from '../auth/password.service';
 import { AuthUser } from '../auth/auth.types';
 
 interface CreateUserBody {
-  username?: unknown;
   mobile?: unknown;
   email?: unknown;
   password?: unknown;
@@ -41,13 +40,13 @@ export class UsersService {
   ) {}
 
   async create(currentUser: AuthUser, body: CreateUserBody) {
-    const username = requiredString(body.username, 'username');
+    const email = requiredString(body.email, 'email');
     const existingUser = await this.prisma.user.findUnique({
-      where: { username },
+      where: { username: email },
     });
 
     if (existingUser) {
-      throw new ConflictException('Username already exists');
+      throw new ConflictException('Email already exists');
     }
 
     const password = requiredString(body.password, 'password');
@@ -59,9 +58,9 @@ export class UsersService {
     const user = await this.prisma.user.create({
       data: {
         labId: currentUser.labId,
-        username,
+        username: email,
         mobile: requiredString(body.mobile, 'mobile'),
-        email: optionalString(body.email, 'email'),
+        email,
         password: this.passwordService.hash(password),
         role: enumValue(UserRole, body.role, 'role'),
         isActive: optionalBoolean(body.isActive, 'isActive') ?? true,
@@ -108,5 +107,17 @@ export class UsersService {
     });
 
     return this.authService.safeUser(user);
+  }
+
+  async remove(currentUser: AuthUser, id: string) {
+    const user = await this.findOne(currentUser, id);
+
+    if (user.id === currentUser.id) {
+      throw new ConflictException('Cannot delete your own user account');
+    }
+
+    await this.prisma.user.delete({ where: { id } });
+
+    return { success: true };
   }
 }

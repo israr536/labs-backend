@@ -16,6 +16,7 @@ interface PatientBody {
   age?: unknown;
   gender?: unknown;
   mobile?: unknown;
+  email?: unknown;
   address?: unknown;
 }
 
@@ -32,6 +33,7 @@ export class PatientsService {
         age: optionalInteger(body.age, 'age'),
         gender: enumValue(Gender, body.gender, 'gender'),
         mobile: optionalString(body.mobile, 'mobile'),
+        email: optionalString(body.email, 'email'),
         address: optionalString(body.address, 'address'),
       },
     });
@@ -46,6 +48,7 @@ export class PatientsService {
               OR: [
                 { name: { contains: search, mode: 'insensitive' as const } },
                 { mobile: { contains: search, mode: 'insensitive' as const } },
+                { email: { contains: search, mode: 'insensitive' as const } },
               ],
             }
           : {}),
@@ -79,6 +82,7 @@ export class PatientsService {
           ? enumValue(Gender, body.gender, 'gender')
           : undefined,
         mobile: optionalString(body.mobile, 'mobile'),
+        email: optionalString(body.email, 'email'),
         address: optionalString(body.address, 'address'),
       },
     });

@@ -13,6 +13,16 @@ export class AuthController {
     return this.authService.registerLab(body ?? {});
   }
 
+  @Post('signup/request-otp')
+  requestSignupOtp(@Body() body: unknown) {
+    return this.authService.requestSignupOtp(body ?? {});
+  }
+
+  @Post('signup/verify-otp')
+  verifySignupOtp(@Body() body: unknown) {
+    return this.authService.verifySignupOtp(body ?? {});
+  }
+
   @Post('login')
   login(@Body() body: unknown) {
     return this.authService.login(body ?? {});
