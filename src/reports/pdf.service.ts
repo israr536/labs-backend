@@ -1,8 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
-const execFileAsync = promisify(execFile);
+import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { generate } from 'html-pdf-node';
 
 interface ReportData {
   report: { id: string; reportNumber: string; status: string; remarks?: string | null; doctorNotes?: string | null; referredBy?: string | null; sampleCollectedAt?: Date | null; reportedAt?: Date | null; createdAt: Date };
@@ -15,23 +12,15 @@ interface ReportData {
 @Injectable()
 export class PdfService {
   async generateReportPdf(data: ReportData): Promise<Buffer> {
-    const html = this.generateReportHtml(data);
-    const executable = process.env.CHROME_BIN ?? 'chromium';
-    const { stdout } = await execFileAsync(executable, [
-      '--headless',
-      '--no-sandbox',
-      '--disable-gpu',
-      '--disable-dev-shm-usage',
-      '--print-to-pdf-no-header',
-      '--print-to-pdf=-',
-      'about:blank',
-    ], { maxBuffer: 20 * 1024 * 1024 });
-
-    // Chromium cannot receive HTML through about:blank via stdin in all builds;
-    // callers should set CHROME_BIN to a browser available in the deployment image.
-    // The generated HTML remains available as a fallback for local/browser printing.
-    if (!stdout) throw new Error('PDF renderer returned an empty document');
-    return Buffer.from(stdout, 'binary');
+    try {
+      return await generate({ content: this.generateReportHtml(data) }, {
+        format: 'A4',
+        printBackground: true,
+        margin: { top: '12mm', right: '12mm', bottom: '14mm', left: '12mm' },
+      });
+    } catch (error) {
+      throw new ServiceUnavailableException('PDF generation is temporarily unavailable');
+    }
   }
 
   generateReportHtml(data: ReportData): string {
@@ -40,9 +29,9 @@ export class PdfService {
     const rows = data.results.map((result) => `<tr><td>${e(result.name)}</td><td>${e(result.value || 'N/A')}</td><td>${e(result.unit || '')}</td><td>${e(result.normalRange || '')}</td><td style="${flagStyle(result.flag)}">${e(result.flag || '')}</td></tr>`).join('');
     const date = (value?: Date | null) => value ? new Date(value).toLocaleString('en-IN') : 'N/A';
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>
-      @page{size:A4;margin:14mm}body{font-family:Arial,sans-serif;color:#172033;font-size:11px}h1{margin:0;font-size:24px}h2{font-size:13px;border-bottom:1px solid #bbb;padding-bottom:5px;margin-top:20px}.header{text-align:center;border-bottom:2px solid #222;padding-bottom:12px}.muted{color:#5b6575;font-size:10px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:5px 20px}.item{padding:3px 0}.label{font-weight:700}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ccc;padding:6px;text-align:left}th{background:#f1f3f5;font-size:10px}.notes{border-left:3px solid #888;background:#f7f7f7;padding:10px;white-space:pre-wrap}.footer{margin-top:30px;border-top:1px solid #ccc;padding-top:10px;text-align:center;font-size:9px;color:#687386}
+      @page{size:A4;margin:0}body{font-family:Arial,sans-serif;color:#172033;font-size:11px;margin:0;padding:0}h1{margin:0;font-size:24px}h2{font-size:13px;border-bottom:1px solid #bbb;padding-bottom:5px;margin-top:20px}.header{text-align:center;border-bottom:2px solid #222;padding-bottom:12px}.muted{color:#5b6575;font-size:10px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:5px 20px}.item{padding:3px 0}.label{font-weight:700}table{width:100%;border-collapse:collapse;margin-top:8px;page-break-inside:auto}thead{display:table-header-group}tr{page-break-inside:avoid}th,td{border:1px solid #ccc;padding:6px;text-align:left}th{background:#f1f3f5;font-size:10px}.notes{border-left:3px solid #888;background:#f7f7f7;padding:10px;white-space:pre-wrap}.footer{margin-top:30px;border-top:1px solid #ccc;padding-top:10px;text-align:center;font-size:9px;color:#687386}
     </style></head><body><div class="header"><h1>${e(data.lab.name)}</h1><div class="muted">${e(data.lab.address || '')}</div><div class="muted">${e(data.lab.mobile)} ${data.lab.email ? `| ${e(data.lab.email)}` : ''}</div></div>
-    <h2>Patient Information</h2><div class="grid"><div class="item"><span class="label">Name:</span> ${e(data.patient.name)}</div><div class="item"><span class="label">Report No:</span> ${e(data.report.reportNumber)}</div><div class="item"><span class="label">Age / Gender:</span> ${e(data.patient.age ?? 'N/A')} / ${e(data.patient.gender)}</div><div class="item"><span class="label">Mobile:</span> ${e(data.patient.mobile || 'N/A')}</div><div class="item"><span class="label">Referred By:</span> ${e(data.report.referredBy || 'N/A')}</div><div class="item"><span class="label">Collected:</span> ${e(date(data.report.sampleCollectedAt))}</div><div class="item"><span class="label">Reported:</span> ${e(date(data.report.reportedAt))}</div><div class="item"><span class="label">Status:</span> ${e(data.report.status)}</div></div>
+    <h2>Patient Information</h2><div class="grid"><div class="item"><span class="label">Name:</span> ${e(data.patient.name)}</div><div class="item"><span class="label">Report No:</span> ${e(data.report.reportNumber)}</div><div class="item"><span class="label">Age / Gender:</span> ${e(data.patient.age ?? 'N/A')} / ${e(data.patient.gender)}</div><div class="item"><span class="label">Mobile:</span> ${e(data.patient.mobile || 'N/A')}</div><div class="item"><span class="label">Referred By:</span> ${e(data.report.referredBy || 'N/A')}</div><div class="item"><span class="label">Collected:</span> ${e(date(data.report.sampleCollectedAt))}</div><div class="item"><span class="label">Reported:</span> ${e(data.report.reportedAt ? date(data.report.reportedAt) : 'N/A')}</div><div class="item"><span class="label">Status:</span> ${e(data.report.status)}</div></div>
     <h2>Test: ${e(data.test.name)}</h2><div class="muted">Category: ${e(data.test.category || 'N/A')}</div><table><thead><tr><th>Parameter</th><th>Result</th><th>Unit</th><th>Reference Range</th><th>Flag</th></tr></thead><tbody>${rows}</tbody></table>
     ${data.report.remarks || data.report.doctorNotes ? `<h2>Additional Information</h2><div class="notes">${data.report.remarks ? `<b>Remarks:</b> ${e(data.report.remarks)}\n` : ''}${data.report.doctorNotes ? `<b>Doctor Notes:</b> ${e(data.report.doctorNotes)}` : ''}</div>` : ''}
     <div class="footer">Report ${e(data.report.reportNumber)} | Generated by the laboratory reporting system | ${e(date(new Date()))}</div></body></html>`;
