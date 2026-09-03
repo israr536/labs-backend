@@ -66,8 +66,8 @@ model Lab {
   subscriptionPlan    String?
   subscriptionStartAt DateTime?
   subscriptionEndAt   DateTime?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   patients Patient[]
   reports  Report[]
@@ -162,7 +162,7 @@ model TestParameter {
   isRequired       Boolean            @default(true)
   remarks          String?
   createdAt        DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
+  updatedAt        DateTime           @updatedAt
 
   test             Test               @relation(fields: [testId], references: [id], onDelete: Cascade)
   results          ReportResult[]
@@ -307,6 +307,7 @@ model FinalReport {
   orderId       String   @unique
   reportNumber  String   @unique
   finalizedById String
+  snapshot      Json
   finalizedAt   DateTime @default(now())
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -336,7 +337,7 @@ model PendingLabRegistration {
   code              String
   name              String
   mobile             String
-  email             String?
+  email              String?
   address            String?
   adminUsername      String
   adminMobile        String
