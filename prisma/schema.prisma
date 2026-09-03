@@ -62,7 +62,7 @@ model Lab {
   email               String?
   address             String?
   icon                String?
-  isActive            Boolean   @default(true)
+  isActive             Boolean   @default(true)
   subscriptionPlan    String?
   subscriptionStartAt DateTime?
   subscriptionEndAt   DateTime?
@@ -120,27 +120,17 @@ model Patient {
 model Test {
   id          String   @id @default(uuid())
   labId       String
-
   code        String
   shortName   String?
-
   name        String
-
   category    String?
   department  String?
-
   sampleType  String?
-
   price       Float?
-
   tat         Int?
-
   method      String?
-
   remarks     String?
-
   isActive    Boolean  @default(true)
-
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -158,31 +148,22 @@ model Test {
 model TestParameter {
   id               String             @id @default(uuid())
   testId           String
-
   name             String
-
   inputType        ParameterInputType @default(NUMBER)
-
   unit             String?
-
   normalMin        Float?
   normalMax        Float?
-
   referenceRange   Json?
-
   options          Json?
-
   displayOrder     Int                @default(0)
-
   isRequired       Boolean            @default(true)
-
   remarks          String?
-
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 
   test             Test               @relation(fields: [testId], references: [id], onDelete: Cascade)
   results          ReportResult[]
+  orderResults     OrderResult[]
 
   @@index([testId])
   @@unique([testId, name])
@@ -194,7 +175,7 @@ model Report {
   patientId          String
   testId             String
   reportNumber       String       @unique
-  createdById        String
+  createdById         String
   status             ReportStatus @default(DRAFT)
   remarks            String?
   doctorNotes        String?
@@ -262,29 +243,53 @@ model OrderItem {
   price     Float
   createdAt DateTime @default(now())
 
-  order LabOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  test  Test     @relation(fields: [testId], references: [id])
+  order   LabOrder     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  test    Test         @relation(fields: [testId], references: [id])
+  results OrderResult[]
 
   @@unique([orderId, testId])
   @@index([testId])
 }
 
+model OrderResult {
+  id           String      @id @default(uuid())
+  orderItemId  String
+  parameterId  String
+  sampleId     String?
+  value        String
+  flag         ResultFlag?
+  verifiedAt   DateTime?
+  verifiedById String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  orderItem   OrderItem     @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  parameter   TestParameter @relation(fields: [parameterId], references: [id])
+  sample      Sample?       @relation(fields: [sampleId], references: [id])
+
+  @@unique([orderItemId, parameterId])
+  @@index([parameterId])
+  @@index([sampleId])
+  @@index([verifiedById])
+}
+
 model Sample {
-  id               String        @id @default(uuid())
+  id               String       @id @default(uuid())
   labId            String
   orderId          String
   accessionNumber  String
   specimenType     String
   container        String?
-  status           SampleStatus  @default(PENDING)
+  status           SampleStatus @default(PENDING)
   collectedAt      DateTime?
   receivedAt       DateTime?
   rejectedReason   String?
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
 
-  lab   Lab      @relation(fields: [labId], references: [id])
-  order LabOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  lab     Lab           @relation(fields: [labId], references: [id])
+  order   LabOrder      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  results OrderResult[]
 
   @@unique([labId, accessionNumber])
   @@index([labId, orderId])
@@ -309,7 +314,7 @@ model PendingLabRegistration {
   code              String
   name              String
   mobile             String
-  email              String?
+  email             String?
   address            String?
   adminUsername      String
   adminMobile        String
