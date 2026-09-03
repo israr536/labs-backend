@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
+import { FinalReportsModule } from './final-reports/final-reports.module';
 import { LabsModule } from './labs/labs.module';
 import { OrdersModule } from './orders/orders.module';
 import { PatientsModule } from './patients/patients.module';
@@ -26,6 +27,7 @@ import { UsersModule } from './users/users.module';
     OrdersModule,
     SamplesModule,
     ResultsModule,
+    FinalReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
