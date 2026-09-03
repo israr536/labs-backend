@@ -75,6 +75,7 @@ model Lab {
   users    User[]
   orders   LabOrder[]
   samples  Sample[]
+  finalReports FinalReport[]
 }
 
 model User {
@@ -93,6 +94,8 @@ model User {
   createdReports Report[]       @relation("ReportCreatedBy")
   refreshTokens  RefreshToken[]
   createdOrders  LabOrder[]     @relation("OrderCreatedBy")
+  verifiedResults OrderResult[] @relation("OrderResultVerifiedBy")
+  finalizedReports FinalReport[] @relation("FinalReportFinalizedBy")
 
   @@index([labId])
 }
@@ -159,7 +162,7 @@ model TestParameter {
   isRequired       Boolean            @default(true)
   remarks          String?
   createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  updatedAt         DateTime           @updatedAt
 
   test             Test               @relation(fields: [testId], references: [id], onDelete: Cascade)
   results          ReportResult[]
@@ -176,15 +179,15 @@ model Report {
   testId             String
   reportNumber       String       @unique
   createdById         String
-  status             ReportStatus @default(DRAFT)
+  status              ReportStatus @default(DRAFT)
   remarks            String?
   doctorNotes        String?
   referredBy         String?
   approvedBy         String?
   sampleCollectedAt  DateTime?
   reportedAt         DateTime?
-  createdAt          DateTime     @default(now())
-  updatedAt          DateTime     @updatedAt
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
 
   createdBy User           @relation("ReportCreatedBy", fields: [createdById], references: [id])
   lab       Lab            @relation(fields: [labId], references: [id])
@@ -230,6 +233,7 @@ model LabOrder {
   createdBy User        @relation("OrderCreatedBy", fields: [createdById], references: [id])
   items     OrderItem[]
   samples   Sample[]
+  finalReport FinalReport?
 
   @@unique([labId, orderNumber])
   @@index([labId, patientId, createdAt])
@@ -266,6 +270,7 @@ model OrderResult {
   orderItem   OrderItem     @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
   parameter   TestParameter @relation(fields: [parameterId], references: [id])
   sample      Sample?       @relation(fields: [sampleId], references: [id])
+  verifiedBy  User?         @relation("OrderResultVerifiedBy", fields: [verifiedById], references: [id])
 
   @@unique([orderItemId, parameterId])
   @@index([parameterId])
@@ -294,6 +299,23 @@ model Sample {
   @@unique([labId, accessionNumber])
   @@index([labId, orderId])
   @@index([labId, status])
+}
+
+model FinalReport {
+  id            String   @id @default(uuid())
+  labId         String
+  orderId       String   @unique
+  reportNumber  String   @unique
+  finalizedById String
+  finalizedAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  lab         Lab      @relation(fields: [labId], references: [id])
+  order       LabOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  finalizedBy User     @relation("FinalReportFinalizedBy", fields: [finalizedById], references: [id])
+
+  @@index([labId, finalizedAt])
 }
 
 model RefreshToken {
