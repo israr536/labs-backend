@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { OrderStatus, Prisma, ResultFlag, ParameterInputType } from '@prisma/client';
+import { OrderStatus, ResultFlag, ParameterInputType } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import { arrayValue, requiredString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
@@ -54,7 +54,7 @@ export class ResultsService {
         await tx.orderResult.upsert({
           where: { orderItemId_parameterId: { orderItemId: result.orderItemId, parameterId: result.parameterId } },
           create: result,
-          update: { value: result.value, flag: result.flag, sampleId: result.sampleId },
+          update: { value: result.value, flag: result.flag, sampleId: result.sampleId, verifiedAt: null, verifiedById: null },
         });
       }
       await tx.labOrder.update({ where: { id: order.id }, data: { status: OrderStatus.RESULT_ENTERED } });
@@ -86,15 +86,25 @@ export class ResultsService {
     }
 
     const missing: string[] = [];
+    const resultIds: string[] = [];
     for (const item of order.items) {
       for (const parameter of item.test.parameters) {
         const result = item.results.find((row) => row.parameterId === parameter.id);
         if (parameter.isRequired && (!result || !result.value.trim())) missing.push(`${item.test.name}: ${parameter.name}`);
+        if (result) resultIds.push(result.id);
       }
     }
     if (missing.length) throw new BadRequestException(`Missing required results: ${missing.join(', ')}`);
+    if (!resultIds.length) throw new BadRequestException('No results are available for verification');
 
-    await this.prisma.labOrder.update({ where: { id: order.id }, data: { status: OrderStatus.VERIFIED } });
+    const verifiedAt = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.orderResult.updateMany({
+        where: { id: { in: resultIds } },
+        data: { verifiedAt, verifiedById: currentUser.id },
+      });
+      await tx.labOrder.update({ where: { id: order.id }, data: { status: OrderStatus.VERIFIED } });
+    });
     return this.findOne(currentUser, orderId);
   }
 
