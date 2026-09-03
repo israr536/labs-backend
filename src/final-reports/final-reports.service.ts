@@ -11,9 +11,7 @@ export class FinalReportsService {
   async finalize(currentUser: AuthUser, orderId: string) {
     const order = await this.getOrder(currentUser, orderId);
     if (order.status === OrderStatus.FINAL) return this.getReport(currentUser, orderId);
-    if (order.status !== OrderStatus.VERIFIED) {
-      throw new BadRequestException('Only verified orders can be finalized');
-    }
+    if (order.status !== OrderStatus.VERIFIED) throw new BadRequestException('Only verified orders can be finalized');
     if (!order.items.length) throw new BadRequestException('Order has no tests');
     if (!order.samples.length) throw new BadRequestException('Order has no samples');
 
@@ -26,48 +24,34 @@ export class FinalReportsService {
     }
     if (missing.length) throw new BadRequestException(`Missing required results: ${missing.join(', ')}`);
     const incompleteSamples = order.samples.filter((sample) => sample.status !== SampleStatus.COMPLETED);
-    if (incompleteSamples.length) {
-      throw new BadRequestException(`All samples must be completed before finalization: ${incompleteSamples.map((s) => s.accessionNumber).join(', ')}`);
-    }
+    if (incompleteSamples.length) throw new BadRequestException(`All samples must be completed before finalization: ${incompleteSamples.map((s) => s.accessionNumber).join(', ')}`);
 
     const lab = await this.prisma.lab.findUnique({ where: { id: currentUser.labId }, select: { code: true } });
     if (!lab) throw new NotFoundException('Lab not found');
     const reportNumber = await this.createReportNumber(lab.code);
 
-    return this.prisma.$transaction(async (tx) => {
-      const existing = await tx.finalReport.findUnique({ where: { orderId: order.id } });
-      if (existing) {
-        await tx.labOrder.updateMany({ where: { id: order.id, labId: currentUser.labId }, data: { status: OrderStatus.FINAL } });
-        return existing;
-      }
-      const report = await tx.finalReport.create({
-        data: {
-          labId: currentUser.labId,
-          orderId: order.id,
-          reportNumber,
-          finalizedById: currentUser.id,
-        },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.finalReport.upsert({
+        where: { orderId: order.id },
+        create: { labId: currentUser.labId, orderId: order.id, reportNumber, finalizedById: currentUser.id },
+        update: {},
       });
       await tx.labOrder.updateMany({ where: { id: order.id, labId: currentUser.labId, status: OrderStatus.VERIFIED }, data: { status: OrderStatus.FINAL } });
-      return report;
     });
+    return this.getReport(currentUser, orderId);
   }
 
   async getReport(currentUser: AuthUser, orderId: string) {
     const report = await this.prisma.finalReport.findFirst({
       where: { orderId, labId: currentUser.labId },
       include: {
+        lab: { select: { id: true, code: true, name: true, mobile: true, email: true, address: true } },
         finalizedBy: { select: { id: true, username: true, role: true } },
         order: {
           include: {
             patient: true,
             samples: true,
-            items: {
-              include: {
-                test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } },
-                results: true,
-              },
-            },
+            items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } }, results: true } },
           },
         },
       },
@@ -80,11 +64,7 @@ export class FinalReportsService {
     const data = await this.getReport(currentUser, orderId);
     if (data.order.status !== OrderStatus.FINAL) throw new BadRequestException('Only final reports can be downloaded as PDF');
     try {
-      return await generate({ content: this.toHtml(data) }, {
-        format: 'A4',
-        printBackground: true,
-        margin: { top: '12mm', right: '12mm', bottom: '14mm', left: '12mm' },
-      });
+      return await generate({ content: this.toHtml(data) }, { format: 'A4', printBackground: true, margin: { top: '12mm', right: '12mm', bottom: '14mm', left: '12mm' } });
     } catch {
       throw new ServiceUnavailableException('PDF generation is temporarily unavailable');
     }
@@ -104,16 +84,7 @@ export class FinalReportsService {
   private async getOrder(currentUser: AuthUser, orderId: string) {
     const order = await this.prisma.labOrder.findFirst({
       where: { id: orderId, labId: currentUser.labId },
-      include: {
-        patient: true,
-        samples: true,
-        items: {
-          include: {
-            test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } },
-            results: true,
-          },
-        },
-      },
+      include: { patient: true, samples: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } }, results: true } } },
     });
     if (!order) throw new NotFoundException('Order not found');
     return order;
@@ -125,6 +96,7 @@ export class FinalReportsService {
       reportNumber: report.reportNumber,
       finalizedAt: report.finalizedAt,
       finalizedBy: report.finalizedBy,
+      lab: report.lab,
       order: {
         id: report.order.id,
         orderNumber: report.order.orderNumber,
@@ -134,27 +106,14 @@ export class FinalReportsService {
         orderedAt: report.order.orderedAt,
         patient: report.order.patient,
         samples: report.order.samples,
-        tests: report.order.items.map((item: any) => {
-          const resultByParameter = new Map(item.results.map((result: any) => [result.parameterId, result]));
-          return {
-            orderItemId: item.id,
-            test: { id: item.test.id, code: item.test.code, name: item.test.name, category: item.test.category, department: item.test.department, sampleType: item.test.sampleType, method: item.test.method },
-            parameters: item.test.parameters.map((parameter: any) => {
-              const result = resultByParameter.get(parameter.id);
-              return {
-                parameterId: parameter.id,
-                name: parameter.name,
-                value: result?.value ?? null,
-                unit: parameter.unit,
-                referenceRange: parameter.referenceRange,
-                normalMin: parameter.normalMin,
-                normalMax: parameter.normalMax,
-                flag: result?.flag ?? null,
-                displayOrder: parameter.displayOrder,
-              };
-            }),
-          };
-        }),
+        tests: report.order.items.map((item: any) => ({
+          orderItemId: item.id,
+          test: { id: item.test.id, code: item.test.code, name: item.test.name, category: item.test.category, department: item.test.department, sampleType: item.test.sampleType, method: item.test.method },
+          parameters: item.test.parameters.map((parameter: any) => {
+            const result = item.results.find((row: any) => row.parameterId === parameter.id);
+            return { parameterId: parameter.id, name: parameter.name, value: result?.value ?? null, unit: parameter.unit, referenceRange: parameter.referenceRange, normalMin: parameter.normalMin, normalMax: parameter.normalMax, flag: result?.flag ?? null, displayOrder: parameter.displayOrder };
+          }),
+        })),
       },
     };
   }
@@ -167,7 +126,7 @@ export class FinalReportsService {
       const rows = test.parameters.map((p: any) => `<tr><td>${e(p.name)}</td><td>${e(p.value ?? 'N/A')}</td><td>${e(p.unit || '')}</td><td>${e(this.referenceRange(p))}</td><td style="${flagStyle(p.flag)}">${e(p.flag || '')}</td></tr>`).join('');
       return `<div class="test"><h2>${e(test.test.name)}</h2><div class="muted">${e(test.test.department || test.test.category || '')}${test.test.method ? ` | Method: ${e(test.test.method)}` : ''}</div><table><thead><tr><th>Parameter</th><th>Result</th><th>Unit</th><th>Reference Range</th><th>Flag</th></tr></thead><tbody>${rows}</tbody></table></div>`;
     }).join('');
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>@page{size:A4;margin:0}body{font-family:Arial,sans-serif;color:#172033;font-size:11px;margin:0;padding:0}h1{margin:0;font-size:24px}h2{font-size:14px;border-bottom:1px solid #bbb;padding-bottom:5px;margin:18px 0 5px}.header{text-align:center;border-bottom:2px solid #222;padding-bottom:12px}.muted{color:#5b6575;font-size:10px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:5px 20px}.item{padding:3px 0}.label{font-weight:700}table{width:100%;border-collapse:collapse;margin-top:8px}thead{display:table-header-group}tr{page-break-inside:avoid}th,td{border:1px solid #ccc;padding:6px;text-align:left}th{background:#f1f3f5;font-size:10px}.test{page-break-inside:auto}.footer{margin-top:25px;border-top:1px solid #ccc;padding-top:10px;text-align:center;font-size:9px;color:#687386}.approval{margin-top:24px;text-align:right}.mutedblock{margin-top:8px;white-space:pre-wrap}</style></head><body><div class="header"><h1>${e(data.lab.name)}</h1><div class="muted">${e(data.lab.address || '')}</div><div class="muted">${e(data.lab.mobile)}${data.lab.email ? ` | ${e(data.lab.email)}` : ''}</div></div><h2>Patient Information</h2><div class="grid"><div class="item"><span class="label">Name:</span> ${e(data.order.patient.name)}</div><div class="item"><span class="label">Report No:</span> ${e(data.reportNumber)}</div><div class="item"><span class="label">Age / Gender:</span> ${e(data.order.patient.age ?? 'N/A')} / ${e(data.order.patient.gender)}</div><div class="item"><span class="label">Mobile:</span> ${e(data.order.patient.mobile || 'N/A')}</div><div class="item"><span class="label">Order No:</span> ${e(data.order.orderNumber)}</div><div class="item"><span class="label">Ordered:</span> ${e(date(data.order.orderedAt))}</div><div class="item"><span class="label">Finalized:</span> ${e(date(data.finalizedAt))}</div><div class="item"><span class="label">Referred By:</span> ${e(data.order.referredBy || 'N/A')}</div></div>${tests}<div class="approval"><b>Verified / Finalized by:</b> ${e(data.finalizedBy.username)} (${e(data.finalizedBy.role)})<br>${e(date(data.finalizedAt))}</div><div class="footer">Report ${e(data.reportNumber)} | Generated by the laboratory reporting system</div></body></html>`;
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>@page{size:A4;margin:0}body{font-family:Arial,sans-serif;color:#172033;font-size:11px;margin:0;padding:0}h1{margin:0;font-size:24px}h2{font-size:14px;border-bottom:1px solid #bbb;padding-bottom:5px;margin:18px 0 5px}.header{text-align:center;border-bottom:2px solid #222;padding-bottom:12px}.muted{color:#5b6575;font-size:10px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:5px 20px}.item{padding:3px 0}.label{font-weight:700}table{width:100%;border-collapse:collapse;margin-top:8px}thead{display:table-header-group}tr{page-break-inside:avoid}th,td{border:1px solid #ccc;padding:6px;text-align:left}th{background:#f1f3f5;font-size:10px}.test{page-break-inside:auto}.footer{margin-top:25px;border-top:1px solid #ccc;padding-top:10px;text-align:center;font-size:9px;color:#687386}.approval{margin-top:24px;text-align:right}</style></head><body><div class="header"><h1>${e(data.lab.name)}</h1><div class="muted">${e(data.lab.address || '')}</div><div class="muted">${e(data.lab.mobile)}${data.lab.email ? ` | ${e(data.lab.email)}` : ''}</div></div><h2>Patient Information</h2><div class="grid"><div class="item"><span class="label">Name:</span> ${e(data.order.patient.name)}</div><div class="item"><span class="label">Report No:</span> ${e(data.reportNumber)}</div><div class="item"><span class="label">Age / Gender:</span> ${e(data.order.patient.age ?? 'N/A')} / ${e(data.order.patient.gender)}</div><div class="item"><span class="label">Mobile:</span> ${e(data.order.patient.mobile || 'N/A')}</div><div class="item"><span class="label">Order No:</span> ${e(data.order.orderNumber)}</div><div class="item"><span class="label">Ordered:</span> ${e(date(data.order.orderedAt))}</div><div class="item"><span class="label">Finalized:</span> ${e(date(data.finalizedAt))}</div><div class="item"><span class="label">Referred By:</span> ${e(data.order.referredBy || 'N/A')}</div></div>${tests}<div class="approval"><b>Verified / Finalized by:</b> ${e(data.finalizedBy.username)} (${e(data.finalizedBy.role)})<br>${e(date(data.finalizedAt))}</div><div class="footer">Report ${e(data.reportNumber)} | Generated by the laboratory reporting system</div></body></html>`;
   }
 
   private referenceRange(parameter: any): string {
