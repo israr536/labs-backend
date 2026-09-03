@@ -8,6 +8,7 @@ import { OrdersModule } from './orders/orders.module';
 import { PatientsModule } from './patients/patients.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ReportsModule } from './reports/reports.module';
+import { ResultsModule } from './results/results.module';
 import { SamplesModule } from './samples/samples.module';
 import { TestsModule } from './tests/tests.module';
 import { UsersModule } from './users/users.module';
@@ -24,6 +25,7 @@ import { UsersModule } from './users/users.module';
     ReportsModule,
     OrdersModule,
     SamplesModule,
+    ResultsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
