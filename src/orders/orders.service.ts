@@ -42,9 +42,7 @@ export class OrdersService {
         referredBy: optionalString(body.referredBy, 'referredBy'),
         clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'),
         createdById: currentUser.id,
-        items: {
-          create: tests.map((test) => ({ testId: test.id, price: test.price })),
-        },
+        items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) },
       },
       include: { patient: true, items: { include: { test: true } }, samples: true },
     });
@@ -59,15 +57,27 @@ export class OrdersService {
     return { ...order, results: order.items.flatMap((item) => item.results) };
   }
 
-  async findAll(currentUser: AuthUser, skip = 0, take = 20) {
+  async findAll(currentUser: AuthUser, skip = 0, take = 20, search?: string, status?: OrderStatus) {
     if (!Number.isInteger(skip) || skip < 0) throw new BadRequestException('skip must be >= 0');
     if (!Number.isInteger(take) || take < 1 || take > 100) throw new BadRequestException('take must be between 1 and 100');
-    const where: Prisma.LabOrderWhereInput = { labId: currentUser.labId };
+
+    const where: Prisma.LabOrderWhereInput = {
+      labId: currentUser.labId,
+      ...(status ? { status } : {}),
+      ...(search ? {
+        OR: [
+          { orderNumber: { contains: search, mode: 'insensitive' } },
+          { patient: { name: { contains: search, mode: 'insensitive' } } },
+          { patient: { mobile: { contains: search, mode: 'insensitive' } } },
+        ],
+      } : {}),
+    };
+
     const [total, data] = await this.prisma.$transaction([
       this.prisma.labOrder.count({ where }),
       this.prisma.labOrder.findMany({ where, include: { patient: true, items: { include: { test: true } }, samples: true }, orderBy: { createdAt: 'desc' }, skip, take }),
     ]);
-    return { data, pagination: { total, skip, take, pages: Math.ceil(total / take) } };
+    return { data, pagination: { total, skip, take, page: Math.floor(skip / take) + 1, pages: Math.ceil(total / take) } };
   }
 
   private async createOrderNumber(labId: string, labCode: string) {
