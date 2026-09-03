@@ -23,7 +23,7 @@ CREATE TABLE "OrderItem" (
   "id" TEXT NOT NULL,
   "orderId" TEXT NOT NULL,
   "testId" TEXT NOT NULL,
-  "price" DECIMAL(10,2),
+  "price" DOUBLE PRECISION NOT NULL,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "OrderItem_pkey" PRIMARY KEY ("id")
 );
