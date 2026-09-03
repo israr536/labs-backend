@@ -112,7 +112,7 @@ export class ReportsService {
     const report = await this.findOne(currentUser, id);
     if (report.status === ReportStatus.FINAL) throw new BadRequestException('Final reports cannot be edited');
     const parsedResults = body.results === undefined ? undefined : this.parseResults(body.results);
-    const results = parsedResults ? this.buildResults(parsedResults, report.test.parameters) : undefined;
+    const results = parsedResults === undefined ? undefined : this.buildResults(parsedResults, report.test.parameters);
     await this.prisma.$transaction(async (tx) => {
       await tx.report.update({
         where: { id },
@@ -123,7 +123,11 @@ export class ReportsService {
           sampleCollectedAt: body.sampleCollectedAt === undefined ? undefined : optionalDate(body.sampleCollectedAt, 'sampleCollectedAt'),
         },
       });
-      if (results) {
+      if (results !== undefined) {
+        const submittedIds = new Set(results.map((result) => result.parameterId));
+        await tx.reportResult.deleteMany({
+          where: { reportId: id, parameterId: { notIn: [...submittedIds] } },
+        });
         for (const result of results) {
           await tx.reportResult.upsert({
             where: { reportId_parameterId: { reportId: id, parameterId: result.parameterId } },
