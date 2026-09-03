@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, SampleStatus } from '@prisma/client';
+import { OrderStatus, Prisma, SampleStatus } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import { enumValue, optionalString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,10 +10,10 @@ interface CreateSamplesBody {
 }
 
 const allowedTransitions: Record<SampleStatus, SampleStatus[]> = {
-  PENDING: ['COLLECTED', 'REJECTED'],
-  COLLECTED: ['RECEIVED', 'REJECTED'],
-  RECEIVED: ['PROCESSING', 'REJECTED'],
-  PROCESSING: ['COMPLETED', 'REJECTED'],
+  PENDING: [SampleStatus.COLLECTED, SampleStatus.REJECTED],
+  COLLECTED: [SampleStatus.RECEIVED, SampleStatus.REJECTED],
+  RECEIVED: [SampleStatus.PROCESSING, SampleStatus.REJECTED],
+  PROCESSING: [SampleStatus.COMPLETED, SampleStatus.REJECTED],
   COMPLETED: [],
   REJECTED: [],
 };
@@ -28,7 +28,7 @@ export class SamplesService {
       include: { items: { include: { test: { select: { sampleType: true } } } } },
     });
     if (!order) throw new NotFoundException('Order not found');
-    if (order.status === 'CANCELLED' || order.status === 'FINAL') {
+    if ([OrderStatus.CANCELLED, OrderStatus.FINAL].includes(order.status)) {
       throw new BadRequestException('Samples cannot be created for this order');
     }
 
@@ -38,23 +38,21 @@ export class SamplesService {
     const types = explicitSpecimenType ? [explicitSpecimenType] : specimenTypes;
     if (types.length === 0) throw new BadRequestException('No specimen type is configured for the order tests');
 
-    const created = await this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.sample.findMany({ where: { orderId: order.id }, select: { specimenType: true } });
+      const existingTypes = new Set(existing.map((sample) => sample.specimenType));
+      const typesToCreate = types.filter((type) => !existingTypes.has(type));
+      if (typesToCreate.length === 0) throw new BadRequestException('Samples already exist for the requested specimen types');
+
       const samples = [];
-      for (const specimenType of types) {
+      for (const specimenType of typesToCreate) {
         const accessionNumber = await this.createAccessionNumber(tx, currentUser.labId);
         samples.push(await tx.sample.create({
-          data: { labId: currentUser.labId, orderId, accessionNumber, specimenType, container: explicitContainer },
+          data: { labId: currentUser.labId, orderId: order.id, accessionNumber, specimenType, container: explicitContainer },
         }));
       }
-
-      await tx.labOrder.update({
-        where: { id: order.id },
-        data: { status: 'SAMPLE_COLLECTED' },
-      });
       return samples;
     });
-
-    return created;
   }
 
   async findAll(currentUser: AuthUser, orderId?: string) {
@@ -101,9 +99,14 @@ export class SamplesService {
       });
 
       const orderSamples = await tx.sample.findMany({ where: { orderId: sample.orderId } });
-      if (orderSamples.length > 0 && orderSamples.every((item) => item.status === SampleStatus.COLLECTED || item.status === SampleStatus.RECEIVED || item.status === SampleStatus.PROCESSING || item.status === SampleStatus.COMPLETED)) {
-        await tx.labOrder.update({ where: { id: sample.orderId }, data: { status: 'SAMPLE_COLLECTED' } });
+      const activeSamples = orderSamples.filter((item) => item.status !== SampleStatus.REJECTED);
+      let orderStatus: OrderStatus | undefined;
+      if (activeSamples.length > 0 && activeSamples.every((item) => item.status !== SampleStatus.PENDING)) {
+        if (activeSamples.some((item) => item.status === SampleStatus.PROCESSING)) orderStatus = OrderStatus.PROCESSING;
+        else if (activeSamples.some((item) => item.status === SampleStatus.RECEIVED)) orderStatus = OrderStatus.PROCESSING;
+        else if (activeSamples.every((item) => item.status === SampleStatus.COLLECTED || item.status === SampleStatus.COMPLETED)) orderStatus = OrderStatus.SAMPLE_COLLECTED;
       }
+      if (orderStatus) await tx.labOrder.update({ where: { id: sample.orderId }, data: { status: orderStatus } });
       return updated;
     });
   }
