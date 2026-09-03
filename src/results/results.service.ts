@@ -14,8 +14,8 @@ export class ResultsService {
   async save(currentUser: AuthUser, orderId: string, body: ResultsBody = {}) {
     const inputs = arrayValue<ResultInput>(body.results ?? [], 'results');
     const order = await this.getOrder(currentUser, orderId);
-    if ([OrderStatus.CANCELLED, OrderStatus.FINAL].includes(order.status)) {
-      throw new BadRequestException('Results cannot be entered for this order');
+    if ([OrderStatus.CANCELLED, OrderStatus.FINAL, OrderStatus.VERIFIED].includes(order.status)) {
+      throw new BadRequestException('Results cannot be edited after verification or finalization');
     }
     if (!inputs.length) throw new BadRequestException('At least one result is required');
 
@@ -71,19 +71,13 @@ export class ResultsService {
       status: order.status,
       patient: order.patient,
       samples: order.samples,
-      items: order.items.map((item) => ({
-        id: item.id,
-        test: { id: item.test.id, code: item.test.code, name: item.test.name },
-        results: item.results,
-      })),
+      items: order.items.map((item) => ({ id: item.id, test: { id: item.test.id, code: item.test.code, name: item.test.name }, results: item.results })),
     };
   }
 
   async verify(currentUser: AuthUser, orderId: string) {
     const order = await this.getOrder(currentUser, orderId);
-    if (order.status === OrderStatus.CANCELLED || order.status === OrderStatus.FINAL) {
-      throw new BadRequestException('Order cannot be verified in its current status');
-    }
+    if (order.status !== OrderStatus.RESULT_ENTERED) throw new BadRequestException('Only orders with entered results can be verified');
 
     const missing: string[] = [];
     const resultIds: string[] = [];
@@ -99,10 +93,7 @@ export class ResultsService {
 
     const verifiedAt = new Date();
     await this.prisma.$transaction(async (tx) => {
-      await tx.orderResult.updateMany({
-        where: { id: { in: resultIds } },
-        data: { verifiedAt, verifiedById: currentUser.id },
-      });
+      await tx.orderResult.updateMany({ where: { id: { in: resultIds } }, data: { verifiedAt, verifiedById: currentUser.id } });
       await tx.labOrder.update({ where: { id: order.id }, data: { status: OrderStatus.VERIFIED } });
     });
     return this.findOne(currentUser, orderId);
@@ -111,16 +102,7 @@ export class ResultsService {
   private async getOrder(currentUser: AuthUser, orderId: string) {
     const order = await this.prisma.labOrder.findFirst({
       where: { id: orderId, labId: currentUser.labId },
-      include: {
-        patient: true,
-        samples: true,
-        items: {
-          include: {
-            test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } },
-            results: true,
-          },
-        },
-      },
+      include: { patient: true, samples: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } }, results: true } } },
     });
     if (!order) throw new NotFoundException('Order not found');
     return order;
