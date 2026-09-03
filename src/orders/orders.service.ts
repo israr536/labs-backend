@@ -43,7 +43,7 @@ export class OrdersService {
         clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'),
         createdById: currentUser.id,
         items: {
-          create: tests.map((test) => ({ testId: test.id, price: test.price })),
+          create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })),
         },
       },
       include: { patient: true, items: { include: { test: true } }, samples: true },

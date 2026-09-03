@@ -17,8 +17,16 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 
 interface TestBody {
+  code?: unknown;
+  shortName?: unknown;
   name?: unknown;
   category?: unknown;
+  department?: unknown;
+  sampleType?: unknown;
+  price?: unknown;
+  tat?: unknown;
+  method?: unknown;
+  remarks?: unknown;
   isActive?: unknown;
   parameters?: unknown;
 }
@@ -43,8 +51,16 @@ export class TestsService {
     return this.prisma.test.create({
       data: {
         labId: currentUser.labId,
+        code: requiredString(body.code, 'code'),
+        shortName: optionalString(body.shortName, 'shortName'),
         name: requiredString(body.name, 'name'),
         category: optionalString(body.category, 'category'),
+        department: optionalString(body.department, 'department'),
+        sampleType: optionalString(body.sampleType, 'sampleType'),
+        price: optionalNumber(body.price, 'price'),
+        tat: optionalInteger(body.tat, 'tat'),
+        method: optionalString(body.method, 'method'),
+        remarks: optionalString(body.remarks, 'remarks'),
         isActive: optionalBoolean(body.isActive, 'isActive') ?? true,
         parameters: parameters.length ? { create: parameters } : undefined,
       },
@@ -98,8 +114,19 @@ export class TestsService {
     return this.prisma.test.update({
       where: { id },
       data: {
+        code:
+          body.code === undefined
+            ? undefined
+            : requiredString(body.code, 'code'),
+        shortName: optionalString(body.shortName, 'shortName'),
         name: body.name ? requiredString(body.name, 'name') : undefined,
         category: optionalString(body.category, 'category'),
+        department: optionalString(body.department, 'department'),
+        sampleType: optionalString(body.sampleType, 'sampleType'),
+        price: optionalNumber(body.price, 'price'),
+        tat: optionalInteger(body.tat, 'tat'),
+        method: optionalString(body.method, 'method'),
+        remarks: optionalString(body.remarks, 'remarks'),
         isActive: optionalBoolean(body.isActive, 'isActive'),
         ...(parameters
           ? {

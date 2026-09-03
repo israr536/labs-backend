@@ -9,6 +9,7 @@ export class PrismaService
 {
   constructor() {
     const connectionString = process.env.DATABASE_URL;
+    const useSsl = process.env.DATABASE_SSL === 'true';
 
     if (!connectionString) {
       throw new Error('DATABASE_URL is required');
@@ -17,7 +18,7 @@ export class PrismaService
     super({
       adapter: new PrismaPg({
         connectionString,
-        ssl: { rejectUnauthorized: false },
+        ssl: useSsl ? { rejectUnauthorized: false } : false,
       }),
     });
   }

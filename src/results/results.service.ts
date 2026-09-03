@@ -14,7 +14,12 @@ export class ResultsService {
   async save(currentUser: AuthUser, orderId: string, body: ResultsBody = {}) {
     const inputs = arrayValue<ResultInput>(body.results ?? [], 'results');
     const order = await this.getOrder(currentUser, orderId);
-    if ([OrderStatus.CANCELLED, OrderStatus.FINAL, OrderStatus.VERIFIED].includes(order.status)) {
+    const lockedStatuses: OrderStatus[] = [
+      OrderStatus.CANCELLED,
+      OrderStatus.FINAL,
+      OrderStatus.VERIFIED,
+    ];
+    if (lockedStatuses.includes(order.status)) {
       throw new BadRequestException('Results cannot be edited after verification or finalization');
     }
     if (!inputs.length) throw new BadRequestException('At least one result is required');
