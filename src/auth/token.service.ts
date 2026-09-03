@@ -4,13 +4,16 @@ import { AuthUser, TokenPayload } from './auth.types';
 
 @Injectable()
 export class TokenService {
-  private readonly secret = process.env.ACCESS_TOKEN_SECRET;
+  private readonly secret: string;
   private readonly accessTtlSeconds = Number(process.env.ACCESS_TOKEN_TTL ?? 900);
 
   constructor() {
-    if (!this.secret || this.secret.length < 32) {
+    const secret = process.env.ACCESS_TOKEN_SECRET;
+    if (!secret || secret.length < 32) {
       throw new Error('ACCESS_TOKEN_SECRET must be configured and at least 32 characters long');
     }
+    this.secret = secret;
+
     if (!Number.isInteger(this.accessTtlSeconds) || this.accessTtlSeconds <= 0) {
       throw new Error('ACCESS_TOKEN_TTL must be a positive integer');
     }

@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { OrderStatus, Prisma, SampleStatus } from '@prisma/client';
+import { OrderStatus, Prisma, Sample, SampleStatus } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import { enumValue, optionalString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
@@ -28,7 +28,8 @@ export class SamplesService {
       include: { items: { include: { test: { select: { sampleType: true } } } } },
     });
     if (!order) throw new NotFoundException('Order not found');
-    if ([OrderStatus.CANCELLED, OrderStatus.FINAL].includes(order.status)) {
+    const terminalStatuses: OrderStatus[] = [OrderStatus.CANCELLED, OrderStatus.FINAL];
+    if (terminalStatuses.includes(order.status)) {
       throw new BadRequestException('Samples cannot be created for this order');
     }
 
@@ -44,7 +45,7 @@ export class SamplesService {
       const typesToCreate = types.filter((type) => !existingTypes.has(type));
       if (typesToCreate.length === 0) throw new BadRequestException('Samples already exist for the requested specimen types');
 
-      const samples = [];
+      const samples: Sample[] = [];
       for (const specimenType of typesToCreate) {
         const accessionNumber = await this.createAccessionNumber(tx, currentUser.labId);
         samples.push(await tx.sample.create({
