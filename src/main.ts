@@ -9,6 +9,11 @@ async function bootstrap() {
     ?.split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  if (isProduction && !configuredOrigins?.length) {
+    throw new Error('FRONTEND_URL must be configured in production');
+  }
 
   app.enableCors({
     origin: configuredOrigins?.length ? configuredOrigins : true,
