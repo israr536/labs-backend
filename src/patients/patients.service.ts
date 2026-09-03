@@ -75,15 +75,13 @@ export class PatientsService {
     return this.prisma.patient.update({
       where: { id },
       data: {
-        name: body.name ? requiredString(body.name, 'name') : undefined,
-        dateOfBirth: optionalDate(body.dateOfBirth, 'dateOfBirth'),
-        age: optionalInteger(body.age, 'age'),
-        gender: body.gender
-          ? enumValue(Gender, body.gender, 'gender')
-          : undefined,
-        mobile: optionalString(body.mobile, 'mobile'),
-        email: optionalString(body.email, 'email'),
-        address: optionalString(body.address, 'address'),
+        name: body.name === undefined ? undefined : requiredString(body.name, 'name'),
+        dateOfBirth: body.dateOfBirth === undefined ? undefined : optionalDate(body.dateOfBirth, 'dateOfBirth'),
+        age: body.age === undefined ? undefined : optionalInteger(body.age, 'age'),
+        gender: body.gender === undefined ? undefined : enumValue(Gender, body.gender, 'gender'),
+        mobile: body.mobile === undefined ? undefined : optionalString(body.mobile, 'mobile'),
+        email: body.email === undefined ? undefined : optionalString(body.email, 'email'),
+        address: body.address === undefined ? undefined : optionalString(body.address, 'address'),
       },
     });
   }

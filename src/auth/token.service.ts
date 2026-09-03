@@ -1,14 +1,20 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { AuthUser, TokenPayload } from './auth.types';
 
 @Injectable()
 export class TokenService {
-  private readonly secret =
-    process.env.ACCESS_TOKEN_SECRET ?? 'change-this-access-token-secret';
-  private readonly accessTtlSeconds = Number(
-    process.env.ACCESS_TOKEN_TTL ?? 900,
-  );
+  private readonly secret = process.env.ACCESS_TOKEN_SECRET;
+  private readonly accessTtlSeconds = Number(process.env.ACCESS_TOKEN_TTL ?? 900);
+
+  constructor() {
+    if (!this.secret || this.secret.length < 32) {
+      throw new Error('ACCESS_TOKEN_SECRET must be configured and at least 32 characters long');
+    }
+    if (!Number.isInteger(this.accessTtlSeconds) || this.accessTtlSeconds <= 0) {
+      throw new Error('ACCESS_TOKEN_TTL must be a positive integer');
+    }
+  }
 
   signAccessToken(user: AuthUser): string {
     const now = Math.floor(Date.now() / 1000);
@@ -24,32 +30,47 @@ export class TokenService {
   }
 
   verifyAccessToken(token: string): TokenPayload {
-    const [encodedHeader, encodedPayload, signature] = token.split('.');
+    try {
+      const [encodedHeader, encodedPayload, signature] = token.split('.');
+      if (!encodedHeader || !encodedPayload || !signature) {
+        throw new Error('malformed');
+      }
 
-    if (!encodedHeader || !encodedPayload || !signature) {
-      throw new UnauthorizedException('Invalid token');
+      const signingInput = `${encodedHeader}.${encodedPayload}`;
+      const expectedSignature = this.signature(signingInput);
+      const actual = Buffer.from(signature, 'base64url');
+      const expected = Buffer.from(expectedSignature, 'base64url');
+
+      if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+        throw new Error('signature');
+      }
+
+      const header = JSON.parse(Buffer.from(encodedHeader, 'base64url').toString('utf8')) as {
+        alg?: string;
+        typ?: string;
+      };
+      const payload = JSON.parse(
+        Buffer.from(encodedPayload, 'base64url').toString('utf8'),
+      ) as TokenPayload;
+
+      const now = Math.floor(Date.now() / 1000);
+      if (
+        header.alg !== 'HS256' ||
+        header.typ !== 'JWT' ||
+        payload.type !== 'access' ||
+        typeof payload.id !== 'string' ||
+        typeof payload.labId !== 'string' ||
+        typeof payload.role !== 'string' ||
+        !Number.isFinite(payload.exp) ||
+        payload.exp <= now
+      ) {
+        throw new Error('payload');
+      }
+
+      return payload;
+    } catch {
+      throw new UnauthorizedException('Invalid or expired token');
     }
-
-    const expectedSignature = this.signature(
-      `${encodedHeader}.${encodedPayload}`,
-    );
-
-    if (signature !== expectedSignature) {
-      throw new UnauthorizedException('Invalid token');
-    }
-
-    const payload = JSON.parse(
-      Buffer.from(encodedPayload, 'base64url').toString('utf8'),
-    ) as TokenPayload;
-
-    if (
-      payload.type !== 'access' ||
-      payload.exp < Math.floor(Date.now() / 1000)
-    ) {
-      throw new UnauthorizedException('Token expired');
-    }
-
-    return payload;
   }
 
   createRefreshToken(): string {
@@ -64,13 +85,9 @@ export class TokenService {
     const encodedHeader = Buffer.from(
       JSON.stringify({ alg: 'HS256', typ: 'JWT' }),
     ).toString('base64url');
-    const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
-      'base64url',
-    );
+    const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url');
 
-    return `${encodedHeader}.${encodedPayload}.${this.signature(
-      `${encodedHeader}.${encodedPayload}`,
-    )}`;
+    return `${encodedHeader}.${encodedPayload}.${this.signature(`${encodedHeader}.${encodedPayload}`)}`;
   }
 
   private signature(value: string): string {
