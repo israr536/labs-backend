@@ -53,10 +53,10 @@ export class OrdersService {
   async findOne(currentUser: AuthUser, id: string) {
     const order = await this.prisma.labOrder.findFirst({
       where: { id, labId: currentUser.labId },
-      include: { patient: true, items: { include: { test: { include: { parameters: true } } } }, samples: true, createdBy: { select: { id: true, username: true, role: true } } },
+      include: { patient: true, items: { include: { test: { include: { parameters: true } }, results: true } }, samples: true, createdBy: { select: { id: true, username: true, role: true } } },
     });
     if (!order) throw new NotFoundException('Order not found');
-    return order;
+    return { ...order, results: order.items.flatMap((item) => item.results) };
   }
 
   async findAll(currentUser: AuthUser, skip = 0, take = 20) {
