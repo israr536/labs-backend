@@ -4,6 +4,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { LabsModule } from './labs/labs.module';
+import { OrdersModule } from './orders/orders.module';
 import { PatientsModule } from './patients/patients.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ReportsModule } from './reports/reports.module';
@@ -20,6 +21,7 @@ import { UsersModule } from './users/users.module';
     PatientsModule,
     TestsModule,
     ReportsModule,
+    OrdersModule,
   ],
   controllers: [AppController],
   providers: [AppService],
