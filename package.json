@@ -9,7 +9,8 @@
     "build": "prisma generate && nest build",
     "prisma:generate": "prisma generate",
     "migrate:dev": "prisma migrate dev",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "seed:tests": "ts-node --transpile-only prisma/seed-tests.ts",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"prisma/**/*.ts\" \"master-tests/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
@@ -31,7 +32,9 @@
     "@nestjs/core": "^11.0.1",
     "@nestjs/jwt": "^12.0.1",
     "@nestjs/passport": "^11.0.5",
+    "@nestjs/platform-express": "^11.0.0",
     "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/passport": "^11.0.5",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "bcrypt": "^5.1.1",
@@ -72,19 +75,11 @@
     "typescript-eslint": "^8.20.0"
   },
   "jest": {
-    "moduleFileExtensions": [
-      "js",
-      "json",
-      "ts"
-    ],
+    "moduleFileExtensions": ["js", "json", "ts"],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
-    "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
-    },
-    "collectCoverageFrom": [
-      "**/*.(t|j)s"
-    ],
+    "transform": {"^.+\\.(t|j)s$": "ts-jest"},
+    "collectCoverageFrom": ["**/*.(t|j)s"],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
   }
