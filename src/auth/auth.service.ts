@@ -22,6 +22,7 @@ interface RefreshBody { refreshToken?: unknown }
 interface RequestSignupOtpBody extends RegisterLabBody {}
 interface VerifySignupOtpBody { requestId?: unknown; otp?: unknown }
 const MIN_PASSWORD_LENGTH = 8;
+const TRIAL_DAYS = 14;
 
 @Injectable()
 export class AuthService {
@@ -89,12 +90,25 @@ export class AuthService {
     if (existingUser) throw new ConflictException('Email already exists');
 
     const result = await this.prisma.$transaction(async (tx) => {
-      const lab = await tx.lab.create({ data: { code: pending.code, name: pending.name, mobile: pending.mobile, email: pending.email, address: pending.address } });
+      const trialStart = new Date();
+      const trialEnd = new Date(trialStart.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
+      const lab = await tx.lab.create({
+        data: {
+          code: pending.code,
+          name: pending.name,
+          mobile: pending.mobile,
+          email: pending.email,
+          address: pending.address,
+          subscriptionPlan: 'TRIAL',
+          subscriptionStartAt: trialStart,
+          subscriptionEndAt: trialEnd,
+        },
+      });
       const user = await tx.user.create({ data: { labId: lab.id, username: pending.adminEmail ?? pending.adminUsername, mobile: pending.adminMobile, email: pending.adminEmail ?? pending.adminUsername, password: pending.adminPasswordHash, role: UserRole.ADMIN } });
       await tx.pendingLabRegistration.delete({ where: { id: pending.id } });
       return { lab, user };
     });
-    return { success: true, lab: result.lab, user: this.safeUser(result.user), message: 'Signup completed. Please sign in with your new account.' };
+    return { success: true, lab: result.lab, user: this.safeUser(result.user), message: `Signup completed. Your ${TRIAL_DAYS}-day trial is active. Please sign in with your new account.` };
   }
 
   async login(body: LoginBody) {
@@ -111,7 +125,6 @@ export class AuthService {
     const storedToken = await this.prisma.refreshToken.findUnique({ where: { token: hashedToken }, include: { user: { include: { lab: true } } } });
     if (!storedToken || storedToken.expiresAt.getTime() < Date.now() || !storedToken.user.isActive || !storedToken.user.lab.isActive) throw new UnauthorizedException('Invalid refresh token');
 
-    // deleteMany is an atomic consume operation. If two requests race, only one can consume the token.
     const consumed = await this.prisma.refreshToken.deleteMany({ where: { id: storedToken.id, token: hashedToken } });
     if (consumed.count !== 1) throw new UnauthorizedException('Refresh token has already been used');
 
