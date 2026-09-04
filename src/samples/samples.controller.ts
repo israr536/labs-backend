@@ -1,14 +1,18 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/auth.types';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 import { SamplesService } from './samples.service';
 
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, RolesGuard)
 @Controller('samples')
 export class SamplesController {
   constructor(private readonly samplesService: SamplesService) {}
 
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN)
   @Post('orders/:orderId')
   createForOrder(
     @CurrentUser() user: AuthUser,
@@ -28,6 +32,7 @@ export class SamplesController {
     return this.samplesService.findOne(user, id);
   }
 
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN)
   @Patch(':id/status')
   updateStatus(
     @CurrentUser() user: AuthUser,
