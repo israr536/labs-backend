@@ -12,8 +12,7 @@ export class PatientsService {
   constructor(private readonly prisma: PrismaService, private readonly subscriptionService: SubscriptionService) {}
 
   async create(currentUser: AuthUser, body: PatientBody) {
-    await this.subscriptionService.assertWithinLimit(currentUser.labId, 'patients');
-    return this.prisma.patient.create({ data: {
+    const data = {
       labId: currentUser.labId,
       name: requiredString(body.name, 'name'),
       dateOfBirth: optionalDate(body.dateOfBirth, 'dateOfBirth'),
@@ -22,7 +21,13 @@ export class PatientsService {
       mobile: optionalString(body.mobile, 'mobile'),
       email: optionalString(body.email, 'email'),
       address: optionalString(body.address, 'address'),
-    } });
+    };
+
+    return this.prisma.$transaction(async (tx) => {
+      await this.subscriptionService.lockLimit(tx, currentUser.labId, 'patients');
+      await this.subscriptionService.assertWithinLimit(currentUser.labId, 'patients', 1, tx);
+      return tx.patient.create({ data });
+    });
   }
 
   findAll(currentUser: AuthUser, search?: string) {
