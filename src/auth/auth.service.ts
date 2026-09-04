@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  GoneException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -47,6 +48,8 @@ interface VerifySignupOtpBody {
   otp?: unknown;
 }
 
+const MIN_PASSWORD_LENGTH = 8;
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -55,82 +58,15 @@ export class AuthService {
     private readonly tokenService: TokenService,
   ) {}
 
-  async registerLab(body: RegisterLabBody) {
-    const admin = body.admin ?? {};
-    const labName = requiredString(body.name, 'name');
-    const labCode =
-      optionalString(body.code, 'code') ?? this.createLabCode(labName);
-    const adminEmail = requiredString(admin.email, 'admin.email');
-    const adminPassword = requiredString(admin.password, 'admin.password');
-
-    if (adminPassword.length < 6) {
-      throw new ConflictException(
-        'admin.password must be at least 6 characters',
-      );
-    }
-
-    const existingLab = await this.prisma.lab.findUnique({
-      where: { code: labCode },
-    });
-    const existingUser = await this.prisma.user.findFirst({
-      where: {
-        OR: [
-          { username: adminEmail },
-          { email: adminEmail },
-        ],
-      },
-    });
-
-    if (existingLab) {
-      throw new ConflictException('Lab code already exists');
-    }
-
-    if (existingUser) {
-      throw new ConflictException('Email already exists');
-    }
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      const lab = await tx.lab.create({
-        data: {
-          code: labCode,
-          name: labName,
-          mobile: requiredString(body.mobile, 'mobile'),
-          email: optionalString(body.email, 'email'),
-          address: optionalString(body.address, 'address'),
-          subscriptionPlan: optionalString(
-            body.subscriptionPlan,
-            'subscriptionPlan',
-          ),
-          subscriptionStartAt: optionalDate(
-            body.subscriptionStartAt,
-            'subscriptionStartAt',
-          ),
-          subscriptionEndAt: optionalDate(
-            body.subscriptionEndAt,
-            'subscriptionEndAt',
-          ),
-        },
-      });
-
-      const user = await tx.user.create({
-        data: {
-          labId: lab.id,
-          username: adminEmail,
-          mobile: requiredString(admin.mobile, 'admin.mobile'),
-          email: adminEmail,
-          password: this.passwordService.hash(adminPassword),
-          role: UserRole.ADMIN,
-        },
-      });
-
-      return { lab, user };
-    });
-
-    return {
-      lab: result.lab,
-      user: this.safeUser(result.user),
-      ...(await this.createTokens(result.user)),
-    };
+  /**
+   * Kept as a compatibility endpoint, but intentionally disabled. Public lab
+   * creation must go through OTP verification so an account cannot be created
+   * without proving ownership of the signup contact channel.
+   */
+  async registerLab(_body: RegisterLabBody) {
+    throw new GoneException(
+      'Direct lab registration is disabled. Use /auth/signup/request-otp and /auth/signup/verify-otp.',
+    );
   }
 
   async requestSignupOtp(body: RequestSignupOtpBody) {
@@ -138,16 +74,12 @@ export class AuthService {
     const labName = requiredString(body.name, 'name');
     const labCode =
       optionalString(body.code, 'code') ?? this.createLabCode(labName);
-    const adminEmail = requiredString(admin.email, 'admin.email');
+    const adminEmail = normalizeEmail(requiredString(admin.email, 'admin.email'));
     const adminPassword = requiredString(admin.password, 'admin.password');
     const adminMobile = requiredString(admin.mobile, 'admin.mobile');
     const labMobile = requiredString(body.mobile, 'mobile');
 
-    if (adminPassword.length < 6) {
-      throw new ConflictException(
-        'admin.password must be at least 6 characters',
-      );
-    }
+    this.validatePassword(adminPassword);
 
     const [existingLab, existingUser] = await Promise.all([
       this.prisma.lab.findUnique({ where: { code: labCode } }),
@@ -186,7 +118,7 @@ export class AuthService {
         address: optionalString(body.address, 'address'),
         adminUsername: adminEmail,
         adminMobile,
-        adminEmail: optionalString(admin.email, 'admin.email') ?? adminEmail,
+        adminEmail,
         adminPasswordHash: this.passwordService.hash(adminPassword),
         otpHash: this.passwordService.hash(otp),
         expiresAt,
@@ -200,7 +132,7 @@ export class AuthService {
     return {
       requestId: pending.id,
       expiresAt: pending.expiresAt,
-      delivery: admin.email ? 'email' : 'mobile',
+      delivery: 'email',
       ...(process.env.NODE_ENV === 'production' ? {} : { devOtp: otp }),
     };
   }
@@ -290,13 +222,13 @@ export class AuthService {
   }
 
   async login(body: LoginBody) {
-    const email = requiredString(body.email, 'email');
+    const email = normalizeEmail(requiredString(body.email, 'email'));
     const password = requiredString(body.password, 'password');
     const user = await this.prisma.user.findFirst({
       where: {
         OR: [
           { username: email },
-          { email: email },
+          { email },
         ],
       },
       include: { lab: true },
@@ -335,6 +267,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid refresh token');
     }
 
+    // Rotate refresh tokens. A token can therefore be used only once.
     await this.prisma.refreshToken.delete({ where: { id: storedToken.id } });
 
     return {
@@ -361,8 +294,8 @@ export class AuthService {
       include: { lab: true },
     });
 
-    if (!user) {
-      throw new UnauthorizedException('User not found');
+    if (!user || !user.isActive || !user.lab.isActive) {
+      throw new UnauthorizedException('User account is inactive');
     }
 
     return {
@@ -374,13 +307,16 @@ export class AuthService {
   safeUser<T extends { password: string }>(user: T) {
     const safeUser = { ...user };
     delete (safeUser as { password?: string }).password;
-
     return safeUser;
   }
 
   private async createTokens(user: User) {
     const refreshToken = this.tokenService.createRefreshToken();
     const refreshTokenDays = Number(process.env.REFRESH_TOKEN_DAYS ?? 30);
+    if (!Number.isInteger(refreshTokenDays) || refreshTokenDays < 1 || refreshTokenDays > 365) {
+      throw new Error('REFRESH_TOKEN_DAYS must be an integer between 1 and 365');
+    }
+
     const expiresAt = new Date(
       Date.now() + refreshTokenDays * 24 * 60 * 60 * 1000,
     );
@@ -405,6 +341,14 @@ export class AuthService {
     };
   }
 
+  private validatePassword(password: string) {
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      throw new ConflictException(
+        `password must be at least ${MIN_PASSWORD_LENGTH} characters`,
+      );
+    }
+  }
+
   private createLabCode(name: string): string {
     const base = name
       .toUpperCase()
@@ -414,4 +358,8 @@ export class AuthService {
 
     return `${base || 'LAB'}-${Date.now().toString(36).toUpperCase()}`;
   }
+}
+
+function normalizeEmail(value: string): string {
+  return value.trim().toLowerCase();
 }
