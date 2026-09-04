@@ -23,21 +23,24 @@ export class OrdersService {
     if (!patient) throw new NotFoundException('Patient not found');
     if (tests.length !== testIds.length) throw new BadRequestException('One or more tests are invalid or inactive');
 
-    await this.subscriptionService.assertWithinLimit(currentUser.labId, 'orders');
     const lab = await this.prisma.lab.findUnique({ where: { id: currentUser.labId }, select: { code: true } });
     if (!lab) throw new NotFoundException('Lab not found');
 
-    const orderNumber = await this.createOrderNumber(currentUser.labId, lab.code);
-    return this.prisma.labOrder.create({ data: {
-      labId: currentUser.labId,
-      patientId,
-      orderNumber,
-      status: OrderStatus.REGISTERED,
-      referredBy: optionalString(body.referredBy, 'referredBy'),
-      clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'),
-      createdById: currentUser.id,
-      items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) },
-    }, include: { patient: true, items: { include: { test: true } }, samples: true } });
+    return this.prisma.$transaction(async (tx) => {
+      await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
+      await this.subscriptionService.assertWithinLimit(currentUser.labId, 'orders', 1, tx);
+      const orderNumber = await this.createOrderNumber(tx, currentUser.labId, lab.code);
+      return tx.labOrder.create({ data: {
+        labId: currentUser.labId,
+        patientId,
+        orderNumber,
+        status: OrderStatus.REGISTERED,
+        referredBy: optionalString(body.referredBy, 'referredBy'),
+        clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'),
+        createdById: currentUser.id,
+        items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) },
+      }, include: { patient: true, items: { include: { test: true } }, samples: true } });
+    });
   }
 
   async findOne(currentUser: AuthUser, id: string) {
@@ -61,12 +64,12 @@ export class OrdersService {
     return { data, pagination: { total, skip, take, page: Math.floor(skip / take) + 1, pages: Math.ceil(total / take) } };
   }
 
-  private async createOrderNumber(labId: string, labCode: string) {
+  private async createOrderNumber(db: Prisma.TransactionClient, labId: string, labCode: string) {
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     for (let attempt = 0; attempt < 5; attempt++) {
       const suffix = Math.floor(100000 + Math.random() * 900000);
       const candidate = `${labCode}-ORD-${date}-${suffix}`;
-      const exists = await this.prisma.labOrder.findFirst({ where: { labId, orderNumber: candidate }, select: { id: true } });
+      const exists = await db.labOrder.findFirst({ where: { labId, orderNumber: candidate }, select: { id: true } });
       if (!exists) return candidate;
     }
     throw new BadRequestException('Unable to allocate a unique order number');
