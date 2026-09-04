@@ -1,8 +1,11 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, Res, UseGuards } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { AuthGuard } from './auth.guard';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './current-user.decorator';
 import type { AuthUser } from './auth.types';
+
+const REFRESH_COOKIE = 'lab_refresh_token';
 
 @Controller('auth')
 export class AuthController {
@@ -24,23 +27,68 @@ export class AuthController {
   }
 
   @Post('login')
-  login(@Body() body: unknown) {
-    return this.authService.login(body ?? {});
+  async login(@Body() body: unknown, @Res({ passthrough: true }) response: Response) {
+    const result = await this.authService.login(body ?? {});
+    this.setRefreshCookie(response, result.refreshToken);
+    return this.withoutRefreshToken(result);
   }
 
   @Post('refresh')
-  refresh(@Body() body: unknown) {
-    return this.authService.refresh(body ?? {});
+  async refresh(@Body() body: unknown, @Req() request: Request, @Res({ passthrough: true }) response: Response) {
+    const refreshToken = this.readRefreshCookie(request) ?? this.readBodyRefreshToken(body);
+    const result = await this.authService.refresh({ refreshToken });
+    this.setRefreshCookie(response, result.refreshToken);
+    return this.withoutRefreshToken(result);
   }
 
   @Post('logout')
-  logout(@Body() body: unknown) {
-    return this.authService.logout(body ?? {});
+  async logout(@Body() body: unknown, @Req() request: Request, @Res({ passthrough: true }) response: Response) {
+    const refreshToken = this.readRefreshCookie(request) ?? this.readBodyRefreshToken(body);
+    if (refreshToken) await this.authService.logout({ refreshToken });
+    response.clearCookie(REFRESH_COOKIE, this.cookieOptions());
+    return { success: true };
   }
 
   @UseGuards(AuthGuard)
   @Get('me')
   me(@CurrentUser() user: AuthUser) {
     return this.authService.me(user.id);
+  }
+
+  private setRefreshCookie(response: Response, refreshToken: string) {
+    const days = Number(process.env.REFRESH_TOKEN_DAYS ?? 30);
+    response.cookie(REFRESH_COOKIE, refreshToken, {
+      ...this.cookieOptions(),
+      maxAge: days * 24 * 60 * 60 * 1000,
+    });
+  }
+
+  private cookieOptions() {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const sameSite = process.env.REFRESH_COOKIE_SAMESITE === 'none' ? 'none' : 'lax';
+    return {
+      httpOnly: true,
+      secure: isProduction || sameSite === 'none',
+      sameSite: sameSite as 'lax' | 'none',
+      path: '/auth',
+    };
+  }
+
+  private readRefreshCookie(request: Request) {
+    const header = request.headers.cookie;
+    if (!header) return undefined;
+    const value = header.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${REFRESH_COOKIE}=`));
+    return value ? decodeURIComponent(value.slice(REFRESH_COOKIE.length + 1)) : undefined;
+  }
+
+  private readBodyRefreshToken(body: unknown) {
+    if (!body || typeof body !== 'object') return undefined;
+    const value = (body as { refreshToken?: unknown }).refreshToken;
+    return typeof value === 'string' && value.trim() ? value : undefined;
+  }
+
+  private withoutRefreshToken<T extends { refreshToken: string }>(result: T) {
+    const { refreshToken: _refreshToken, ...safeResult } = result;
+    return safeResult;
   }
 }
