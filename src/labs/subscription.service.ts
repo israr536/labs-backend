@@ -1,4 +1,5 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export const SUBSCRIPTION_PLANS = {
@@ -11,6 +12,8 @@ export const SUBSCRIPTION_PLANS = {
 
 export type SubscriptionPlan = keyof typeof SUBSCRIPTION_PLANS;
 export type UsageResource = 'users' | 'patients' | 'tests' | 'orders';
+type PrismaTransaction = Prisma.TransactionClient;
+type PrismaLike = PrismaService | PrismaTransaction;
 
 @Injectable()
 export class SubscriptionService {
@@ -40,8 +43,8 @@ export class SubscriptionService {
     };
   }
 
-  async assertWithinLimit(labId: string, resource: UsageResource, additional = 1) {
-    const lab = await this.prisma.lab.findUnique({
+  async assertWithinLimit(labId: string, resource: UsageResource, additional = 1, db: PrismaLike = this.prisma) {
+    const lab = await db.lab.findUnique({
       where: { id: labId },
       select: { subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true },
     });
@@ -54,8 +57,6 @@ export class SubscriptionService {
     if (lab.subscriptionEndAt && lab.subscriptionEndAt.getTime() <= now) {
       throw new ForbiddenException('Subscription has expired');
     }
-
-    // Existing labs without subscription metadata remain compatible until migrated to a plan.
     if (!lab.subscriptionPlan) return;
 
     const plan = this.normalizePlan(lab.subscriptionPlan);
@@ -63,18 +64,29 @@ export class SubscriptionService {
     const limit = SUBSCRIPTION_PLANS[plan][limitKey] as number | null;
     if (limit === null) return;
 
-    const usage = await this.getUsage(labId);
+    const usage = await this.getUsage(labId, db);
     if (usage[resource] + additional > limit) {
       throw new ForbiddenException(`${resource} limit reached for the ${SUBSCRIPTION_PLANS[plan].name} plan`);
     }
   }
 
-  private async getUsage(labId: string) {
+  /**
+   * Acquire a PostgreSQL transaction advisory lock for this lab/resource.
+   * Call this inside the same transaction that creates the resource. This
+   * serializes concurrent creates for the same subscription counter without
+   * adding a usage-counter table or changing the Prisma schema.
+   */
+  async lockLimit(db: PrismaTransaction, labId: string, resource: UsageResource) {
+    const lockKey = `${labId}:${resource}`;
+    await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+  }
+
+  private async getUsage(labId: string, db: PrismaLike = this.prisma) {
     const [users, patients, tests, orders] = await Promise.all([
-      this.prisma.user.count({ where: { labId, isActive: true } }),
-      this.prisma.patient.count({ where: { labId } }),
-      this.prisma.test.count({ where: { labId } }),
-      this.prisma.labOrder.count({ where: { labId } }),
+      db.user.count({ where: { labId, isActive: true } }),
+      db.patient.count({ where: { labId } }),
+      db.test.count({ where: { labId } }),
+      db.labOrder.count({ where: { labId } }),
     ]);
     return { users, patients, tests, orders };
   }
