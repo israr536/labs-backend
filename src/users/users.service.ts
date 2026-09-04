@@ -31,6 +31,8 @@ interface UpdateUserBody {
   isActive?: unknown;
 }
 
+const MIN_PASSWORD_LENGTH = 8;
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -40,9 +42,15 @@ export class UsersService {
   ) {}
 
   async create(currentUser: AuthUser, body: CreateUserBody) {
-    const email = requiredString(body.email, 'email');
-    const existingUser = await this.prisma.user.findUnique({
-      where: { username: email },
+    const email = normalizeEmail(requiredString(body.email, 'email'));
+    const existingUser = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { username: email },
+          { email },
+        ],
+      },
+      select: { id: true },
     });
 
     if (existingUser) {
@@ -50,11 +58,9 @@ export class UsersService {
     }
 
     const password = requiredString(body.password, 'password');
+    this.validatePassword(password);
 
-    if (password.length < 6) {
-      throw new ConflictException('password must be at least 6 characters');
-    }
-
+    const role = enumValue(UserRole, body.role, 'role');
     const user = await this.prisma.user.create({
       data: {
         labId: currentUser.labId,
@@ -62,7 +68,7 @@ export class UsersService {
         mobile: requiredString(body.mobile, 'mobile'),
         email,
         password: this.passwordService.hash(password),
-        role: enumValue(UserRole, body.role, 'role'),
+        role,
         isActive: optionalBoolean(body.isActive, 'isActive') ?? true,
       },
     });
@@ -92,17 +98,80 @@ export class UsersService {
   }
 
   async update(currentUser: AuthUser, id: string, body: UpdateUserBody) {
-    await this.findOne(currentUser, id);
+    const existing = await this.prisma.user.findFirst({
+      where: { id, labId: currentUser.labId },
+    });
 
-    const password = optionalString(body.password, 'password');
+    if (!existing) {
+      throw new NotFoundException('User not found');
+    }
+
+    const nextRole = body.role === undefined
+      ? existing.role
+      : enumValue(UserRole, body.role, 'role');
+    const nextActive = body.isActive === undefined
+      ? existing.isActive
+      : optionalBoolean(body.isActive, 'isActive');
+
+    // An administrator must not be able to accidentally lock themselves out
+    // or remove the final active administrator of a tenant.
+    if (existing.id === currentUser.id && (nextRole !== UserRole.ADMIN || nextActive === false)) {
+      throw new ConflictException('You cannot deactivate or remove your own administrator access');
+    }
+
+    if (existing.role === UserRole.ADMIN &&
+        (nextRole !== UserRole.ADMIN || nextActive === false)) {
+      const activeAdminCount = await this.prisma.user.count({
+        where: {
+          labId: currentUser.labId,
+          role: UserRole.ADMIN,
+          isActive: true,
+          id: { not: existing.id },
+        },
+      });
+      if (activeAdminCount === 0) {
+        throw new ConflictException('The lab must have at least one active administrator');
+      }
+    }
+
+    const nextEmail = body.email === undefined
+      ? existing.email
+      : normalizeEmail(optionalString(body.email, 'email') ?? '');
+
+    if (!nextEmail) {
+      throw new ConflictException('email cannot be empty');
+    }
+
+    if (nextEmail !== existing.email || nextEmail !== existing.username) {
+      const duplicate = await this.prisma.user.findFirst({
+        where: {
+          id: { not: id },
+          OR: [
+            { username: nextEmail },
+            { email: nextEmail },
+          ],
+        },
+        select: { id: true },
+      });
+      if (duplicate) throw new ConflictException('Email already exists');
+    }
+
+    const password = body.password === undefined
+      ? undefined
+      : optionalString(body.password, 'password');
+    if (password) this.validatePassword(password);
+
     const user = await this.prisma.user.update({
       where: { id },
       data: {
-        mobile: optionalString(body.mobile, 'mobile'),
-        email: optionalString(body.email, 'email'),
+        // username is the login identifier in the current data model, so it
+        // must move together with email when an administrator changes it.
+        username: nextEmail,
+        email: nextEmail,
+        mobile: body.mobile === undefined ? undefined : optionalString(body.mobile, 'mobile'),
         password: password ? this.passwordService.hash(password) : undefined,
-        role: body.role ? enumValue(UserRole, body.role, 'role') : undefined,
-        isActive: optionalBoolean(body.isActive, 'isActive'),
+        role: nextRole,
+        isActive: nextActive,
       },
     });
 
@@ -110,14 +179,42 @@ export class UsersService {
   }
 
   async remove(currentUser: AuthUser, id: string) {
-    const user = await this.findOne(currentUser, id);
+    const user = await this.prisma.user.findFirst({
+      where: { id, labId: currentUser.labId },
+    });
 
+    if (!user) throw new NotFoundException('User not found');
     if (user.id === currentUser.id) {
       throw new ConflictException('Cannot delete your own user account');
     }
 
-    await this.prisma.user.delete({ where: { id } });
+    if (user.role === UserRole.ADMIN && user.isActive) {
+      const activeAdminCount = await this.prisma.user.count({
+        where: {
+          labId: currentUser.labId,
+          role: UserRole.ADMIN,
+          isActive: true,
+          id: { not: id },
+        },
+      });
+      if (activeAdminCount === 0) {
+        throw new ConflictException('The lab must have at least one active administrator');
+      }
+    }
 
+    await this.prisma.user.delete({ where: { id } });
     return { success: true };
   }
+
+  private validatePassword(password: string) {
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      throw new ConflictException(
+        `password must be at least ${MIN_PASSWORD_LENGTH} characters`,
+      );
+    }
+  }
+}
+
+function normalizeEmail(value: string): string {
+  return value.trim().toLowerCase();
 }
