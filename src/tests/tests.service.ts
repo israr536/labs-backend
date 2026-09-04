@@ -17,77 +17,47 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionService } from '../labs/subscription.service';
 
-interface TestBody {
-  code?: unknown;
-  shortName?: unknown;
-  name?: unknown;
-  category?: unknown;
-  department?: unknown;
-  sampleType?: unknown;
-  price?: unknown;
-  tat?: unknown;
-  method?: unknown;
-  remarks?: unknown;
-  isActive?: unknown;
-  parameters?: unknown;
-}
-
-interface ParameterBody {
-  name?: unknown;
-  inputType?: unknown;
-  unit?: unknown;
-  normalMin?: unknown;
-  normalMax?: unknown;
-  displayOrder?: unknown;
-  isRequired?: unknown;
-}
+interface TestBody { code?: unknown; shortName?: unknown; name?: unknown; category?: unknown; department?: unknown; sampleType?: unknown; price?: unknown; tat?: unknown; method?: unknown; remarks?: unknown; isActive?: unknown; parameters?: unknown }
+interface ParameterBody { name?: unknown; inputType?: unknown; unit?: unknown; normalMin?: unknown; normalMax?: unknown; displayOrder?: unknown; isRequired?: unknown }
 
 @Injectable()
 export class TestsService {
   constructor(private readonly prisma: PrismaService, private readonly subscriptionService: SubscriptionService) {}
 
   async create(currentUser: AuthUser, body: TestBody) {
-    if (optionalBoolean(body.isActive, 'isActive') !== false) {
-      await this.subscriptionService.assertWithinLimit(currentUser.labId, 'tests');
-    }
+    const isActive = optionalBoolean(body.isActive, 'isActive') ?? true;
     const parameters = this.parseParameters(body.parameters, false);
+    const data = {
+      labId: currentUser.labId,
+      code: requiredString(body.code, 'code'),
+      shortName: optionalString(body.shortName, 'shortName'),
+      name: requiredString(body.name, 'name'),
+      category: optionalString(body.category, 'category'),
+      department: optionalString(body.department, 'department'),
+      sampleType: optionalString(body.sampleType, 'sampleType'),
+      price: optionalNumber(body.price, 'price'),
+      tat: optionalInteger(body.tat, 'tat'),
+      method: optionalString(body.method, 'method'),
+      remarks: optionalString(body.remarks, 'remarks'),
+      isActive,
+      parameters: parameters.length ? { create: parameters } : undefined,
+    };
 
-    return this.prisma.test.create({
-      data: {
-        labId: currentUser.labId,
-        code: requiredString(body.code, 'code'),
-        shortName: optionalString(body.shortName, 'shortName'),
-        name: requiredString(body.name, 'name'),
-        category: optionalString(body.category, 'category'),
-        department: optionalString(body.department, 'department'),
-        sampleType: optionalString(body.sampleType, 'sampleType'),
-        price: optionalNumber(body.price, 'price'),
-        tat: optionalInteger(body.tat, 'tat'),
-        method: optionalString(body.method, 'method'),
-        remarks: optionalString(body.remarks, 'remarks'),
-        isActive: optionalBoolean(body.isActive, 'isActive') ?? true,
-        parameters: parameters.length ? { create: parameters } : undefined,
-      },
-      include: { parameters: { orderBy: { displayOrder: 'asc' } } },
+    return this.prisma.$transaction(async (tx) => {
+      if (isActive) {
+        await this.subscriptionService.lockLimit(tx, currentUser.labId, 'tests');
+        await this.subscriptionService.assertWithinLimit(currentUser.labId, 'tests', 1, tx);
+      }
+      return tx.test.create({ data, include: { parameters: { orderBy: { displayOrder: 'asc' } } } });
     });
   }
 
   findAll(currentUser: AuthUser, includeInactive?: string) {
-    return this.prisma.test.findMany({
-      where: {
-        labId: currentUser.labId,
-        ...(includeInactive === 'true' ? {} : { isActive: true }),
-      },
-      include: { parameters: { orderBy: { displayOrder: 'asc' } } },
-      orderBy: [{ category: 'asc' }, { name: 'asc' }],
-    });
+    return this.prisma.test.findMany({ where: { labId: currentUser.labId, ...(includeInactive === 'true' ? {} : { isActive: true }) }, include: { parameters: { orderBy: { displayOrder: 'asc' } } }, orderBy: [{ category: 'asc' }, { name: 'asc' }] });
   }
 
   async findOne(currentUser: AuthUser, id: string) {
-    const test = await this.prisma.test.findFirst({
-      where: { id, labId: currentUser.labId },
-      include: { parameters: { orderBy: { displayOrder: 'asc' } } },
-    });
+    const test = await this.prisma.test.findFirst({ where: { id, labId: currentUser.labId }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } });
     if (!test) throw new NotFoundException('Test not found');
     return test;
   }
@@ -99,24 +69,20 @@ export class TestsService {
       const resultCount = await this.prisma.reportResult.count({ where: { parameter: { testId: id } } });
       if (resultCount > 0) throw new BadRequestException('Cannot replace parameters after reports have results');
     }
-    return this.prisma.test.update({
-      where: { id },
-      data: {
-        code: body.code === undefined ? undefined : requiredString(body.code, 'code'),
-        shortName: optionalString(body.shortName, 'shortName'),
-        name: body.name ? requiredString(body.name, 'name') : undefined,
-        category: optionalString(body.category, 'category'),
-        department: optionalString(body.department, 'department'),
-        sampleType: optionalString(body.sampleType, 'sampleType'),
-        price: optionalNumber(body.price, 'price'),
-        tat: optionalInteger(body.tat, 'tat'),
-        method: optionalString(body.method, 'method'),
-        remarks: optionalString(body.remarks, 'remarks'),
-        isActive: optionalBoolean(body.isActive, 'isActive'),
-        ...(parameters ? { parameters: { deleteMany: {}, create: parameters } } : {}),
-      },
-      include: { parameters: { orderBy: { displayOrder: 'asc' } } },
-    });
+    return this.prisma.test.update({ where: { id }, data: {
+      code: body.code === undefined ? undefined : requiredString(body.code, 'code'),
+      shortName: optionalString(body.shortName, 'shortName'),
+      name: body.name ? requiredString(body.name, 'name') : undefined,
+      category: optionalString(body.category, 'category'),
+      department: optionalString(body.department, 'department'),
+      sampleType: optionalString(body.sampleType, 'sampleType'),
+      price: optionalNumber(body.price, 'price'),
+      tat: optionalInteger(body.tat, 'tat'),
+      method: optionalString(body.method, 'method'),
+      remarks: optionalString(body.remarks, 'remarks'),
+      isActive: optionalBoolean(body.isActive, 'isActive'),
+      ...(parameters ? { parameters: { deleteMany: {}, create: parameters } } : {}),
+    }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } });
   }
 
   async addParameter(currentUser: AuthUser, testId: string, body: ParameterBody) {
