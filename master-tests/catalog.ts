@@ -6,6 +6,8 @@ export type CatalogParameter = {
   normalMax?: number;
   referenceRange?: Record<string, string>;
   options?: string[];
+  displayOrder?: number;
+  isRequired?: boolean;
   remarks?: string;
 };
 

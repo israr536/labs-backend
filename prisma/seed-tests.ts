@@ -79,20 +79,27 @@ async function seedLab(labId: string) {
 
     for (const parameter of definition.parameters) {
       const current = existing?.parameters.find((item) => item.name === parameter.name);
+
       const data = {
         inputType: parameter.inputType,
-        unit: parameter.unit,
-        normalMin: parameter.normalMin,
-        normalMax: parameter.normalMax,
-        referenceRange: parameter.referenceRange,
-        options: parameter.options,
-        displayOrder: parameter.displayOrder,
-        isRequired: parameter.isRequired,
-        remarks: parameter.remarks,
+        unit: parameter.unit ?? null,
+        normalMin: parameter.normalMin ?? null,
+        normalMax: parameter.normalMax ?? null,
+        referenceRange: parameter.referenceRange ?? undefined,
+        options: parameter.options ?? undefined,
+        displayOrder: parameter.displayOrder ?? 0,
+        isRequired: parameter.isRequired ?? true,
+        remarks: parameter.remarks ?? null,
       };
 
       if (!current) {
-        await prisma.testParameter.create({ data: { testId: test.id, name: parameter.name, ...data } });
+        await prisma.testParameter.create({
+          data: {
+            testId: test.id,
+            name: parameter.name,
+            ...data,
+          },
+        });
         createdParameters += 1;
         continue;
       }
