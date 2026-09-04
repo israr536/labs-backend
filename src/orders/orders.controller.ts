@@ -1,15 +1,18 @@
 import { BadRequestException, Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
-import { OrderStatus } from '@prisma/client';
+import { OrderStatus, UserRole } from '@prisma/client';
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/auth.types';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 import { OrdersService } from './orders.service';
 
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, RolesGuard)
 @Controller('orders')
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST)
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() body: unknown) {
     return this.ordersService.create(user, body ?? {});

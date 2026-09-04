@@ -4,6 +4,12 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const express = app.getHttpAdapter().getInstance() as {
+    disable?: (setting: string) => void;
+  };
+
+  // Do not advertise the underlying Express implementation.
+  express.disable?.('x-powered-by');
 
   const configuredOrigins = process.env.FRONTEND_URL
     ?.split(',')
@@ -31,6 +37,10 @@ async function bootstrap() {
   app.enableShutdownHooks();
 
   const port = Number(process.env.PORT ?? 3000);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('PORT must be a valid TCP port');
+  }
+
   await app.listen(port, '0.0.0.0');
 }
 
