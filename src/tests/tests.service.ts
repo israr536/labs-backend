@@ -1,13 +1,10 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ParameterInputType } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import { arrayValue, enumValue, optionalBoolean, optionalInteger, optionalNumber, optionalString, requiredString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionService } from '../labs/subscription.service';
+import { DEFAULT_TEST_TEMPLATES } from './default-test-templates';
 
 interface TestBody { code?: unknown; shortName?: unknown; name?: unknown; category?: unknown; department?: unknown; sampleType?: unknown; price?: unknown; tat?: unknown; method?: unknown; remarks?: unknown; isActive?: unknown; parameters?: unknown }
 interface ParameterBody { name?: unknown; inputType?: unknown; unit?: unknown; normalMin?: unknown; normalMax?: unknown; referenceRange?: unknown; options?: unknown; validation?: unknown; criticalLow?: unknown; criticalHigh?: unknown; decimalPlaces?: unknown; defaultValue?: unknown; formula?: unknown; displayOrder?: unknown; isRequired?: unknown; remarks?: unknown }
@@ -29,7 +26,52 @@ export class TestsService {
     const code = requiredString(overrides.code ?? definition.code, 'code');
     const existing = await this.prisma.test.findUnique({ where: { labId_code: { labId: currentUser.labId, code } } });
     if (existing) throw new BadRequestException(`Test code '${code}' already exists in this lab`);
-    return this.prisma.$transaction(async (tx) => { await this.subscriptionService.lockLimit(tx, currentUser.labId, 'tests'); await this.subscriptionService.assertWithinLimit(currentUser.labId, 'tests', 1, tx); return tx.test.create({ data: { labId: currentUser.labId, catalogId: definition.id, code, shortName: optionalString(overrides.shortName ?? definition.shortName, 'shortName'), name: requiredString(overrides.name ?? definition.name, 'name'), category: optionalString(overrides.category ?? definition.category, 'category'), department: optionalString(overrides.department ?? definition.department, 'department'), sampleType: optionalString(overrides.sampleType ?? definition.specimenType, 'sampleType'), price: optionalNumber(overrides.price, 'price'), tat: optionalInteger(overrides.tat ?? definition.tat, 'tat'), method: optionalString(overrides.method ?? definition.method, 'method'), remarks: optionalString(overrides.remarks, 'remarks'), isActive: optionalBoolean(overrides.isActive, 'isActive') ?? true, parameters: { create: definition.parameters.map((parameter) => ({ name: parameter.name, inputType: parameter.inputType, unit: parameter.unit, normalMin: parameter.normalMin, normalMax: parameter.normalMax, referenceRange: parameter.referenceRange ?? undefined, options: parameter.options ?? undefined, validation: parameter.validation ?? undefined, criticalLow: parameter.criticalLow, criticalHigh: parameter.criticalHigh, decimalPlaces: parameter.decimalPlaces, defaultValue: parameter.defaultValue, formula: parameter.formula, displayOrder: parameter.displayOrder, isRequired: parameter.isRequired, remarks: parameter.remarks })) } }, include: { parameters: { orderBy: { displayOrder: 'asc' } }, catalog: true } }); });
+
+    const readyTemplate = DEFAULT_TEST_TEMPLATES.find((template) => template.code === 'CBC' && definition.name.trim().toLowerCase() === 'complete blood count');
+    const sourceParameters = readyTemplate?.parameters ?? definition.parameters;
+
+    return this.prisma.$transaction(async (tx) => {
+      await this.subscriptionService.lockLimit(tx, currentUser.labId, 'tests');
+      await this.subscriptionService.assertWithinLimit(currentUser.labId, 'tests', 1, tx);
+      return tx.test.create({
+        data: {
+          labId: currentUser.labId,
+          catalogId: definition.id,
+          code,
+          shortName: optionalString(overrides.shortName ?? definition.shortName, 'shortName'),
+          name: requiredString(overrides.name ?? definition.name, 'name'),
+          category: optionalString(overrides.category ?? definition.category, 'category'),
+          department: optionalString(overrides.department ?? definition.department, 'department'),
+          sampleType: optionalString(overrides.sampleType ?? definition.specimenType, 'sampleType'),
+          price: optionalNumber(overrides.price, 'price'),
+          tat: optionalInteger(overrides.tat ?? definition.tat, 'tat'),
+          method: optionalString(overrides.method ?? definition.method, 'method'),
+          remarks: optionalString(overrides.remarks, 'remarks'),
+          isActive: optionalBoolean(overrides.isActive, 'isActive') ?? true,
+          parameters: {
+            create: sourceParameters.map((parameter, index) => ({
+              name: parameter.name,
+              inputType: enumValue(ParameterInputType, parameter.inputType, `parameters.${index}.inputType`),
+              unit: parameter.unit ?? null,
+              normalMin: parameter.normalMin ?? null,
+              normalMax: parameter.normalMax ?? null,
+              referenceRange: 'referenceRange' in parameter ? (parameter.referenceRange ?? undefined) : undefined,
+              options: 'options' in parameter ? (parameter.options ?? undefined) : undefined,
+              validation: 'validation' in parameter ? (parameter.validation ?? undefined) : undefined,
+              criticalLow: 'criticalLow' in parameter ? (parameter.criticalLow ?? null) : null,
+              criticalHigh: 'criticalHigh' in parameter ? (parameter.criticalHigh ?? null) : null,
+              decimalPlaces: 'decimalPlaces' in parameter ? (parameter.decimalPlaces ?? null) : null,
+              defaultValue: 'defaultValue' in parameter ? (parameter.defaultValue ?? null) : null,
+              formula: 'formula' in parameter ? (parameter.formula ?? null) : null,
+              displayOrder: parameter.displayOrder ?? index,
+              isRequired: parameter.isRequired ?? true,
+              remarks: parameter.remarks ?? null,
+            })),
+          },
+        },
+        include: { parameters: { orderBy: { displayOrder: 'asc' } }, catalog: true },
+      });
+    });
   }
 
   findAll(currentUser: AuthUser, includeInactive?: string) { return this.prisma.test.findMany({ where: { labId: currentUser.labId, ...(includeInactive === 'true' ? {} : { isActive: true }) }, include: { parameters: { orderBy: { displayOrder: 'asc' } }, catalog: true }, orderBy: [{ category: 'asc' }, { name: 'asc' }] }); }
