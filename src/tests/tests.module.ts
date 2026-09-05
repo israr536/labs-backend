@@ -5,10 +5,11 @@ import { TestsController } from './tests.controller';
 import { TestsService } from './tests.service';
 import { TestCatalogController } from './test-catalog.controller';
 import { TestCatalogService } from './test-catalog.service';
+import { StarterTestsService } from './starter-tests.service';
 
 @Module({
   imports: [AuthModule, LabsModule],
   controllers: [TestsController, TestCatalogController],
-  providers: [TestsService, TestCatalogService],
+  providers: [TestsService, TestCatalogService, StarterTestsService],
 })
 export class TestsModule {}
