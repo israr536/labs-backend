@@ -24,11 +24,23 @@ export class TestsService {
     const definition = await this.prisma.testDefinition.findFirst({ where: { id: catalogId, isActive: true }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } });
     if (!definition) throw new NotFoundException('Test catalog definition not found');
     const code = requiredString(overrides.code ?? definition.code, 'code');
-    const existing = await this.prisma.test.findUnique({ where: { labId_code: { labId: currentUser.labId, code } } });
-    if (existing) throw new BadRequestException(`Test code '${code}' already exists in this lab`);
-
     const readyTemplate = DEFAULT_TEST_TEMPLATES.find((template) => template.code === 'CBC' && definition.name.trim().toLowerCase() === 'complete blood count');
     const sourceParameters = readyTemplate?.parameters ?? definition.parameters;
+    const existing = await this.prisma.test.findUnique({ where: { labId_code: { labId: currentUser.labId, code } }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } });
+
+    if (existing) {
+      if (!readyTemplate || existing.parameters.length > 1) throw new BadRequestException(`Test code '${code}' already exists in this lab`);
+      const [reportResultCount, orderResultCount] = await Promise.all([
+        this.prisma.reportResult.count({ where: { parameter: { testId: existing.id } } }),
+        this.prisma.orderResult.count({ where: { parameter: { testId: existing.id } } }),
+      ]);
+      if (reportResultCount || orderResultCount) throw new BadRequestException(`Test code '${code}' already exists and already has results`);
+      return this.prisma.$transaction(async (tx) => tx.test.update({
+        where: { id: existing.id },
+        data: { parameters: { deleteMany: {}, create: sourceParameters.map((parameter, index) => this.toParameterCreateData(parameter, index)) } },
+        include: { parameters: { orderBy: { displayOrder: 'asc' } }, catalog: true },
+      }));
+    }
 
     return this.prisma.$transaction(async (tx) => {
       await this.subscriptionService.lockLimit(tx, currentUser.labId, 'tests');
@@ -48,30 +60,32 @@ export class TestsService {
           method: optionalString(overrides.method ?? definition.method, 'method'),
           remarks: optionalString(overrides.remarks, 'remarks'),
           isActive: optionalBoolean(overrides.isActive, 'isActive') ?? true,
-          parameters: {
-            create: sourceParameters.map((parameter, index) => ({
-              name: parameter.name,
-              inputType: enumValue(ParameterInputType, parameter.inputType, `parameters.${index}.inputType`),
-              unit: parameter.unit ?? null,
-              normalMin: parameter.normalMin ?? null,
-              normalMax: parameter.normalMax ?? null,
-              referenceRange: 'referenceRange' in parameter ? (parameter.referenceRange ?? undefined) : undefined,
-              options: 'options' in parameter ? (parameter.options ?? undefined) : undefined,
-              validation: 'validation' in parameter ? (parameter.validation ?? undefined) : undefined,
-              criticalLow: 'criticalLow' in parameter ? (parameter.criticalLow ?? null) : null,
-              criticalHigh: 'criticalHigh' in parameter ? (parameter.criticalHigh ?? null) : null,
-              decimalPlaces: 'decimalPlaces' in parameter ? (parameter.decimalPlaces ?? null) : null,
-              defaultValue: 'defaultValue' in parameter ? (parameter.defaultValue ?? null) : null,
-              formula: 'formula' in parameter ? (parameter.formula ?? null) : null,
-              displayOrder: parameter.displayOrder ?? index,
-              isRequired: parameter.isRequired ?? true,
-              remarks: parameter.remarks ?? null,
-            })),
-          },
+          parameters: { create: sourceParameters.map((parameter, index) => this.toParameterCreateData(parameter, index)) },
         },
         include: { parameters: { orderBy: { displayOrder: 'asc' } }, catalog: true },
       });
     });
+  }
+
+  private toParameterCreateData(parameter: any, index: number) {
+    return {
+      name: parameter.name,
+      inputType: enumValue(ParameterInputType, parameter.inputType, `parameters.${index}.inputType`),
+      unit: parameter.unit ?? null,
+      normalMin: parameter.normalMin ?? null,
+      normalMax: parameter.normalMax ?? null,
+      referenceRange: parameter.referenceRange ?? undefined,
+      options: parameter.options ?? undefined,
+      validation: parameter.validation ?? undefined,
+      criticalLow: parameter.criticalLow ?? null,
+      criticalHigh: parameter.criticalHigh ?? null,
+      decimalPlaces: parameter.decimalPlaces ?? null,
+      defaultValue: parameter.defaultValue ?? null,
+      formula: parameter.formula ?? null,
+      displayOrder: parameter.displayOrder ?? index,
+      isRequired: parameter.isRequired ?? true,
+      remarks: parameter.remarks ?? null,
+    };
   }
 
   findAll(currentUser: AuthUser, includeInactive?: string) { return this.prisma.test.findMany({ where: { labId: currentUser.labId, ...(includeInactive === 'true' ? {} : { isActive: true }) }, include: { parameters: { orderBy: { displayOrder: 'asc' } }, catalog: true }, orderBy: [{ category: 'asc' }, { name: 'asc' }] }); }
