@@ -11,6 +11,7 @@ import { LabsModule } from './labs/labs.module';
 import { OrdersModule } from './orders/orders.module';
 import { PatientsModule } from './patients/patients.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { ReferenceRangesModule } from './reference-ranges/reference-ranges.module';
 import { ReportsModule } from './reports/reports.module';
 import { ResultsModule } from './results/results.module';
 import { SamplesModule } from './samples/samples.module';
@@ -27,6 +28,7 @@ import { UsersModule } from './users/users.module';
     UsersModule,
     PatientsModule,
     TestsModule,
+    ReferenceRangesModule,
     ReportsModule,
     OrdersModule,
     SamplesModule,

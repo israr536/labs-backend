@@ -258,9 +258,35 @@ model TestParameter {
   test             Test               @relation(fields: [testId], references: [id], onDelete: Cascade)
   results          ReportResult[]
   orderResults     OrderResult[]
+  referenceRanges  TestParameterReferenceRange[]
 
   @@index([testId])
   @@unique([testId, name])
+}
+
+model TestParameterReferenceRange {
+  id             String   @id @default(uuid())
+  parameterId    String
+  version        Int
+  gender         Gender?
+  ageMinYears    Decimal? @db.Decimal(7, 2)
+  ageMaxYears    Decimal? @db.Decimal(7, 2)
+  method         String?
+  analyzer       String?
+  low            Float?
+  high           Float?
+  displayRange   String?
+  unit           String?
+  effectiveFrom  DateTime @default(now())
+  effectiveTo    DateTime?
+  createdAt      DateTime @default(now())
+
+  parameter TestParameter @relation(fields: [parameterId], references: [id], onDelete: Restrict)
+  orderResults OrderResult[]
+
+  @@unique([parameterId, version])
+  @@index([parameterId, effectiveFrom])
+  @@index([parameterId, gender])
 }
 
 model Report {
@@ -354,6 +380,8 @@ model OrderResult {
   sampleId     String?
   value        String
   flag         ResultFlag?
+  referenceRangeId String?
+  referenceRangeSnapshot Json?
   verifiedAt   DateTime?
   verifiedById String?
   createdAt    DateTime    @default(now())
@@ -363,17 +391,19 @@ model OrderResult {
   parameter   TestParameter @relation(fields: [parameterId], references: [id])
   sample      Sample?       @relation(fields: [sampleId], references: [id])
   verifiedBy  User?         @relation("OrderResultVerifiedBy", fields: [verifiedById], references: [id])
+  referenceRange TestParameterReferenceRange? @relation(fields: [referenceRangeId], references: [id], onDelete: Restrict)
 
   @@unique([orderItemId, parameterId])
   @@index([parameterId])
   @@index([sampleId])
   @@index([verifiedById])
+  @@index([referenceRangeId])
 }
 
 model Sample {
   id               String       @id @default(uuid())
-  labId             String
-  orderId           String
+  labId            String
+  orderId          String
   accessionNumber   String
   specimenType      String
   container         String?
@@ -453,6 +483,9 @@ model RefreshToken {
   id        String   @id @default(uuid())
   userId    String
   token     String
+  familyId  String   @default(uuid())
+  usedAt    DateTime?
+  revokedAt DateTime?
   expiresAt DateTime
   createdAt DateTime @default(now())
 
@@ -460,6 +493,7 @@ model RefreshToken {
 
   @@unique([token])
   @@index([userId])
+  @@index([familyId])
 }
 
 model PendingLabRegistration {
@@ -476,8 +510,8 @@ model PendingLabRegistration {
   otpHash           String
   attempts          Int      @default(0)
   expiresAt         DateTime
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([code])
   @@index([adminUsername])
