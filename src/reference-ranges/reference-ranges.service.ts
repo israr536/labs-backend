@@ -64,35 +64,51 @@ export class ReferenceRangesService {
     const unit = this.optionalString(body.unit);
     const effectiveFrom = body.effectiveFrom === undefined ? new Date() : this.parseDate(body.effectiveFrom, 'effectiveFrom');
 
-    const existing = await this.prisma.$queryRaw<Array<{ version: number }>>(Prisma.sql`
-      SELECT "version" FROM "TestParameterReferenceRange"
-      WHERE "parameterId" = ${parameterId}::uuid
-      ORDER BY "version" DESC LIMIT 1
-    `);
-    const version = (existing[0]?.version ?? 0) + 1;
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.$queryRaw<Array<{ version: number; effectiveFrom: Date }>>(Prisma.sql`
+        SELECT "version", "effectiveFrom"
+        FROM "TestParameterReferenceRange"
+        WHERE "parameterId" = ${parameterId}::uuid
+        ORDER BY "version" DESC
+        LIMIT 1
+      `);
+      const version = (existing[0]?.version ?? 0) + 1;
+      if (existing[0] && effectiveFrom <= existing[0].effectiveFrom) {
+        throw new BadRequestException('effectiveFrom must be later than the latest reference-range version');
+      }
 
-    const conflicts = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-      SELECT "id"
-      FROM "TestParameterReferenceRange"
-      WHERE "parameterId" = ${parameterId}::uuid
-        AND "effectiveFrom" <= ${effectiveFrom}
-        AND ("effectiveTo" IS NULL OR "effectiveTo" > ${effectiveFrom})
-        AND ("gender" IS NULL OR "gender" = ${gender}::"Gender")
-        AND ("method" IS NULL OR "method" = ${method})
-        AND ("analyzer" IS NULL OR "analyzer" = ${analyzer})
-      LIMIT 1
-    `);
-    if (conflicts.length) throw new BadRequestException('An active reference range already covers this clinical scope at the effective date. Create a non-overlapping definition.');
+      const overlaps = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT "id"
+        FROM "TestParameterReferenceRange"
+        WHERE "parameterId" = ${parameterId}::uuid
+          AND "effectiveFrom" <= ${effectiveFrom}
+          AND ("effectiveTo" IS NULL OR "effectiveTo" > ${effectiveFrom})
+          AND ("gender" IS NULL OR ${gender}::"Gender" IS NULL OR "gender" = ${gender}::"Gender")
+          AND ("method" IS NULL OR ${method} IS NULL OR "method" = ${method})
+          AND ("analyzer" IS NULL OR ${analyzer} IS NULL OR "analyzer" = ${analyzer})
+          AND ("ageMinYears" IS NULL OR ${ageMaxYears} IS NULL OR "ageMaxYears" IS NULL OR "ageMinYears" <= ${ageMaxYears})
+          AND ("ageMaxYears" IS NULL OR ${ageMinYears} IS NULL OR "ageMinYears" IS NULL OR "ageMaxYears" >= ${ageMinYears})
+        LIMIT 1
+      `);
 
-    const created = await this.prisma.$queryRaw<ResolvedReferenceRange[]>(Prisma.sql`
-      INSERT INTO "TestParameterReferenceRange"
-        ("parameterId", "version", "gender", "ageMinYears", "ageMaxYears", "method", "analyzer", "low", "high", "displayRange", "unit", "effectiveFrom")
-      VALUES
-        (${parameterId}::uuid, ${version}, ${gender}::"Gender", ${ageMinYears}, ${ageMaxYears}, ${method}, ${analyzer}, ${low}, ${high}, ${displayRange}, ${unit}, ${effectiveFrom})
-      RETURNING "id", "version", "gender", "ageMinYears"::double precision, "ageMaxYears"::double precision,
-                "method", "analyzer", "low", "high", "displayRange", "unit", "effectiveFrom", "effectiveTo"
-    `);
-    return created[0];
+      if (overlaps.length) {
+        await tx.$executeRaw(Prisma.sql`
+          UPDATE "TestParameterReferenceRange"
+          SET "effectiveTo" = ${effectiveFrom}
+          WHERE "id" = ${overlaps[0].id}::uuid
+        `);
+      }
+
+      const created = await tx.$queryRaw<ResolvedReferenceRange[]>(Prisma.sql`
+        INSERT INTO "TestParameterReferenceRange"
+          ("parameterId", "version", "gender", "ageMinYears", "ageMaxYears", "method", "analyzer", "low", "high", "displayRange", "unit", "effectiveFrom")
+        VALUES
+          (${parameterId}::uuid, ${version}, ${gender}::"Gender", ${ageMinYears}, ${ageMaxYears}, ${method}, ${analyzer}, ${low}, ${high}, ${displayRange}, ${unit}, ${effectiveFrom})
+        RETURNING "id", "version", "gender", "ageMinYears"::double precision, "ageMaxYears"::double precision,
+                  "method", "analyzer", "low", "high", "displayRange", "unit", "effectiveFrom", "effectiveTo"
+      `);
+      return created[0];
+    });
   }
 
   async resolve(currentUser: AuthUser, parameterId: string, patient: { dateOfBirth: Date | null; age: number | null; gender: Gender }, method?: string | null, analyzer?: string | null, at = new Date()) {
