@@ -10,6 +10,7 @@ enum UserRole {
   ADMIN
   TECHNICIAN
   RECEPTIONIST
+  PATHOLOGIST
 }
 
 enum Gender {
@@ -311,6 +312,7 @@ model LabOrder {
   patientId     String
   orderNumber   String
   status        OrderStatus @default(REGISTERED)
+  revision      Int         @default(0)
   referredBy    String?
   clinicalNotes String?
   orderedAt     DateTime    @default(now())
@@ -370,15 +372,15 @@ model OrderResult {
 
 model Sample {
   id               String       @id @default(uuid())
-  labId            String
-  orderId          String
-  accessionNumber  String
-  specimenType     String
-  container        String?
-  status           SampleStatus @default(PENDING)
-  collectedAt      DateTime?
-  receivedAt       DateTime?
-  rejectedReason   String?
+  labId             String
+  orderId           String
+  accessionNumber   String
+  specimenType      String
+  container         String?
+  status            SampleStatus @default(PENDING)
+  collectedAt       DateTime?
+  receivedAt        DateTime?
+  rejectedReason    String?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
@@ -465,15 +467,15 @@ model PendingLabRegistration {
   code              String
   name              String
   mobile             String
-  email             String?
-  address            String?
-  adminUsername      String
-  adminMobile        String
-  adminEmail         String?
-  adminPasswordHash  String
-  otpHash            String
-  attempts           Int      @default(0)
-  expiresAt          DateTime
+  email              String?
+  address           String?
+  adminUsername     String
+  adminMobile       String
+  adminEmail        String?
+  adminPasswordHash String
+  otpHash           String
+  attempts          Int      @default(0)
+  expiresAt         DateTime
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 

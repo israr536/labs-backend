@@ -13,7 +13,7 @@ import { FinalReportsService } from './final-reports.service';
 export class FinalReportsController {
   constructor(private readonly finalReportsService: FinalReportsService) {}
 
-  @Roles(UserRole.ADMIN, UserRole.TECHNICIAN)
+  @Roles(UserRole.ADMIN, UserRole.PATHOLOGIST)
   @Post(':orderId/finalize')
   finalize(@CurrentUser() user: AuthUser, @Param('orderId') orderId: string) {
     return this.finalReportsService.finalize(user, orderId);
@@ -29,29 +29,16 @@ export class FinalReportsController {
     return this.finalReportsService.listVersions(user, orderId);
   }
 
-  @Roles(UserRole.ADMIN, UserRole.TECHNICIAN)
+  @Roles(UserRole.ADMIN, UserRole.PATHOLOGIST)
   @Post(':orderId/report/amend')
-  amend(
-    @CurrentUser() user: AuthUser,
-    @Param('orderId') orderId: string,
-    @Body() body: { reason?: unknown },
-  ) {
+  amend(@CurrentUser() user: AuthUser, @Param('orderId') orderId: string, @Body() body: { reason?: unknown }) {
     return this.finalReportsService.amend(user, orderId, body?.reason);
   }
 
   @Get(':orderId/report/pdf')
-  async getPdf(
-    @CurrentUser() user: AuthUser,
-    @Param('orderId') orderId: string,
-    @Res() response: Response,
-  ) {
+  async getPdf(@CurrentUser() user: AuthUser, @Param('orderId') orderId: string, @Res() response: Response) {
     const pdf = await this.finalReportsService.generatePdf(user, orderId);
-    response.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': 'inline; filename="lab-report.pdf"',
-      'Content-Length': pdf.length.toString(),
-      'Cache-Control': 'private, no-store',
-    });
+    response.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': 'inline; filename="lab-report.pdf"', 'Content-Length': pdf.length.toString(), 'Cache-Control': 'private, no-store' });
     response.end(pdf);
   }
 }
