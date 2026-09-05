@@ -6,17 +6,15 @@ import { EXPANDED_TESTS } from '../master-tests/expanded-catalog';
 import { EXPANDED_TESTS_2 } from '../master-tests/expanded-catalog-2';
 import { enrichCatalogTests } from '../master-tests/catalog-enrichment';
 import { enrichCorePanels } from '../master-tests/panel-enrichment';
+import { enrichSpecialtyPanels } from '../master-tests/specialty-panel-enrichment';
 import { validateCatalog } from '../master-tests/catalog-validator';
 import { buildCatalogCompletenessReport } from '../master-tests/catalog-completeness';
 
-// Build the catalog once, then apply reusable enrichment and canonical panel
-// templates before validation and persistence.
-const CATALOG_TESTS = enrichCorePanels(enrichCatalogTests([...MASTER_TESTS, ...EXPANDED_TESTS, ...EXPANDED_TESTS_2]));
+const CATALOG_TESTS = enrichSpecialtyPanels(enrichCorePanels(enrichCatalogTests([...MASTER_TESTS, ...EXPANDED_TESTS, ...EXPANDED_TESTS_2])));
 if (CATALOG_TESTS.length < 1000) throw new Error(`Master test catalog must contain at least 1000 tests; found ${CATALOG_TESTS.length}`);
 
 const catalogValidation = validateCatalog(CATALOG_TESTS);
 const completeness = buildCatalogCompletenessReport(CATALOG_TESTS, catalogValidation);
-
 console.log('\n=== Master Laboratory Catalog Readiness ===');
 console.log(`Catalog version: ${MASTER_TEST_CATALOG_VERSION}`);
 console.log(`Total tests: ${completeness.totalTests}`);
@@ -31,25 +29,20 @@ console.log(`Parameter input coverage: ${completeness.parameterInputCoveragePerc
 console.log(`Multi-parameter tests/panels: ${catalogValidation.testsWithMultipleParameters}`);
 console.log(`Blocking catalog issues: ${completeness.blockingIssues.length}`);
 console.log(`Clinical/reference review items: ${completeness.clinicalReviewIssues.length}`);
-
 if (completeness.blockingIssues.length) {
   console.error('\nBlocking catalog issues:');
   for (const issue of completeness.blockingIssues.slice(0, 100)) console.error(`- ${issue.code} | ${issue.name} | ${issue.parameter ?? '-'} | ${issue.issue}`);
   if (completeness.blockingIssues.length > 100) console.error(`...and ${completeness.blockingIssues.length - 100} more`);
   throw new Error(`Catalog validation failed with ${completeness.blockingIssues.length} blocking issue(s)`);
 }
-
 if (completeness.clinicalReviewIssues.length) {
   console.warn('\nReference-data review items (non-blocking):');
   for (const issue of completeness.clinicalReviewIssues.slice(0, 50)) console.warn(`- ${issue.code} | ${issue.name} | ${issue.parameter ?? '-'} | ${issue.issue}`);
   if (completeness.clinicalReviewIssues.length > 50) console.warn(`...and ${completeness.clinicalReviewIssues.length - 50} more`);
   console.warn('These ranges require laboratory/method/age/sex/population validation before clinical use.');
 }
-
 console.log('\n=== Readiness by Category ===');
-for (const category of completeness.categoryReadiness) {
-  console.log(`${category.category}: ${category.tests} tests | ready ${category.ready} | clinical review ${category.clinicalReview} | blocked ${category.blocked}`);
-}
+for (const category of completeness.categoryReadiness) console.log(`${category.category}: ${category.tests} tests | ready ${category.ready} | clinical review ${category.clinicalReview} | blocked ${category.blocked}`);
 
 const connectionString = process.env.DATABASE_URL;
 const useSsl = process.env.DATABASE_SSL === 'true';
