@@ -5,12 +5,47 @@ import { MASTER_TESTS, MASTER_TEST_CATALOG_VERSION } from '../master-tests/catal
 import { EXPANDED_TESTS } from '../master-tests/expanded-catalog';
 import { EXPANDED_TESTS_2 } from '../master-tests/expanded-catalog-2';
 import { enrichCatalogTests } from '../master-tests/catalog-enrichment';
+import { validateCatalog } from '../master-tests/catalog-validator';
 
 // The database receives the curated master tests plus the expanded catalog.
 // Enrichment reuses complete curated definitions (including panel parameters,
 // units, options and reference data) whenever the expanded name matches one.
 const CATALOG_TESTS = enrichCatalogTests([...MASTER_TESTS, ...EXPANDED_TESTS, ...EXPANDED_TESTS_2]);
 if (CATALOG_TESTS.length < 1000) throw new Error(`Master test catalog must contain at least 1000 tests; found ${CATALOG_TESTS.length}`);
+
+const catalogValidation = validateCatalog(CATALOG_TESTS);
+const blockingIssues = catalogValidation.issues.filter((issue) => issue.issue !== 'NUMERIC_PARAMETER_MISSING_REFERENCE_DATA');
+const clinicalReviewIssues = catalogValidation.issues.filter((issue) => issue.issue === 'NUMERIC_PARAMETER_MISSING_REFERENCE_DATA');
+
+console.log('\n=== Master Laboratory Catalog Readiness ===');
+console.log(`Catalog version: ${MASTER_TEST_CATALOG_VERSION}`);
+console.log(`Total tests: ${catalogValidation.totalTests}`);
+console.log(`Tests with parameters: ${catalogValidation.testsWithParameters}`);
+console.log(`Multi-parameter tests/panels: ${catalogValidation.testsWithMultipleParameters}`);
+console.log(`Total parameters: ${catalogValidation.totalParameters}`);
+console.log(`Parameters with units: ${catalogValidation.parametersWithUnits}`);
+console.log(`Parameters with reference data: ${catalogValidation.parametersWithReferenceData}`);
+console.log(`Parameters with input configuration: ${catalogValidation.parametersWithInputConfiguration}`);
+console.log(`Blocking catalog issues: ${blockingIssues.length}`);
+console.log(`Clinical/reference review items: ${clinicalReviewIssues.length}`);
+
+if (blockingIssues.length) {
+  console.error('\nBlocking catalog issues:');
+  for (const issue of blockingIssues.slice(0, 100)) {
+    console.error(`- ${issue.code} | ${issue.name} | ${issue.parameter ?? '-'} | ${issue.issue}`);
+  }
+  if (blockingIssues.length > 100) console.error(`...and ${blockingIssues.length - 100} more`);
+  throw new Error(`Catalog validation failed with ${blockingIssues.length} blocking issue(s)`);
+}
+
+if (clinicalReviewIssues.length) {
+  console.warn('\nReference-data review items (non-blocking):');
+  for (const issue of clinicalReviewIssues.slice(0, 50)) {
+    console.warn(`- ${issue.code} | ${issue.name} | ${issue.parameter ?? '-'} | ${issue.issue}`);
+  }
+  if (clinicalReviewIssues.length > 50) console.warn(`...and ${clinicalReviewIssues.length - 50} more`);
+  console.warn('These ranges require laboratory/method/age/sex/population validation before clinical use.');
+}
 
 const connectionString = process.env.DATABASE_URL;
 const useSsl = process.env.DATABASE_SSL === 'true';
