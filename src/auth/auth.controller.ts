@@ -21,6 +21,12 @@ export class AuthController {
     return this.authService.requestSignupOtp(body ?? {});
   }
 
+  @Post('signup/resend-otp')
+  resendSignupOtp(@Body() body: unknown) {
+    const requestId = body && typeof body === 'object' ? (body as { requestId?: unknown }).requestId : undefined;
+    return this.authService.resendSignupOtp(requestId);
+  }
+
   @Post('signup/verify-otp')
   verifySignupOtp(@Body() body: unknown) {
     return this.authService.verifySignupOtp(body ?? {});
