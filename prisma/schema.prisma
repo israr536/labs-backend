@@ -10,6 +10,7 @@ enum UserRole {
   ADMIN
   TECHNICIAN
   RECEPTIONIST
+  PATHOLOGIST
 }
 
 enum Gender {
@@ -311,6 +312,7 @@ model LabOrder {
   patientId     String
   orderNumber   String
   status        OrderStatus @default(REGISTERED)
+  revision      Int         @default(0)
   referredBy    String?
   clinicalNotes String?
   orderedAt     DateTime    @default(now())
@@ -379,8 +381,8 @@ model Sample {
   collectedAt      DateTime?
   receivedAt       DateTime?
   rejectedReason   String?
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
 
   lab     Lab           @relation(fields: [labId], references: [id])
   order   LabOrder      @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -428,7 +430,7 @@ model FinalReportVersion {
 }
 
 model AuditLog {
-  id         String      @id @default(uuid())
+  id         String      @id
   labId      String
   actorId    String?
   action     AuditAction
@@ -465,7 +467,7 @@ model PendingLabRegistration {
   code              String
   name              String
   mobile             String
-  email             String?
+  email              String?
   address            String?
   adminUsername      String
   adminMobile        String
