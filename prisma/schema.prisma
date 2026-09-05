@@ -372,17 +372,17 @@ model OrderResult {
 
 model Sample {
   id               String       @id @default(uuid())
-  labId            String
-  orderId          String
-  accessionNumber  String
-  specimenType     String
-  container        String?
-  status           SampleStatus @default(PENDING)
-  collectedAt      DateTime?
-  receivedAt       DateTime?
-  rejectedReason   String?
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  labId             String
+  orderId           String
+  accessionNumber   String
+  specimenType      String
+  container         String?
+  status            SampleStatus @default(PENDING)
+  collectedAt       DateTime?
+  receivedAt        DateTime?
+  rejectedReason    String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
   lab     Lab           @relation(fields: [labId], references: [id])
   order   LabOrder      @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -430,7 +430,7 @@ model FinalReportVersion {
 }
 
 model AuditLog {
-  id         String      @id
+  id         String      @id @default(uuid())
   labId      String
   actorId    String?
   action     AuditAction
@@ -468,14 +468,14 @@ model PendingLabRegistration {
   name              String
   mobile             String
   email              String?
-  address            String?
-  adminUsername      String
-  adminMobile        String
-  adminEmail         String?
-  adminPasswordHash  String
-  otpHash            String
-  attempts           Int      @default(0)
-  expiresAt          DateTime
+  address           String?
+  adminUsername     String
+  adminMobile       String
+  adminEmail        String?
+  adminPasswordHash String
+  otpHash           String
+  attempts          Int      @default(0)
+  expiresAt         DateTime
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
