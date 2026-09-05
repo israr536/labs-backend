@@ -7,11 +7,16 @@ import { RolesGuard } from '../auth/roles.guard';
 import { UserRole } from '@prisma/client';
 import { TestCatalogService } from './test-catalog.service';
 import { TestsService } from './tests.service';
+import { StarterTestsService } from './starter-tests.service';
 
 @UseGuards(AuthGuard, RolesGuard)
 @Controller('test-catalog')
 export class TestCatalogController {
-  constructor(private readonly service: TestCatalogService, private readonly testsService: TestsService) {}
+  constructor(
+    private readonly service: TestCatalogService,
+    private readonly testsService: TestsService,
+    private readonly starterTestsService: StarterTestsService,
+  ) {}
 
   @Get()
   findAll(@CurrentUser() user: AuthUser, @Query('search') search?: string, @Query('category') category?: string, @Query('department') department?: string) {
@@ -20,6 +25,12 @@ export class TestCatalogController {
 
   @Get('categories')
   categories(@CurrentUser() user: AuthUser) { return this.service.categories(user); }
+
+  @Roles(UserRole.ADMIN)
+  @Post('provision-defaults')
+  provisionDefaults(@CurrentUser() user: AuthUser) {
+    return this.starterTestsService.provision(user);
+  }
 
   @Get(':id')
   findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.service.findOne(user, id); }
