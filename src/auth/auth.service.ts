@@ -10,6 +10,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 import { optionalString, requiredString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
 import { PasswordService } from './password.service';
+import { OtpDeliveryService } from './otp-delivery.service';
 import { TokenService } from './token.service';
 
 interface RegisterLabBody { code?: unknown; name?: unknown; mobile?: unknown; email?: unknown; address?: unknown; subscriptionPlan?: unknown; subscriptionStartAt?: unknown; subscriptionEndAt?: unknown; admin?: { mobile?: unknown; email?: unknown; password?: unknown } }
@@ -19,10 +20,17 @@ interface RequestSignupOtpBody extends RegisterLabBody {}
 interface VerifySignupOtpBody { requestId?: unknown; otp?: unknown }
 const MIN_PASSWORD_LENGTH = 8;
 const TRIAL_DAYS = 14;
+const OTP_TTL_MS = 10 * 60 * 1000;
+const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService, private readonly passwordService: PasswordService, private readonly tokenService: TokenService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly passwordService: PasswordService,
+    private readonly tokenService: TokenService,
+    private readonly otpDelivery: OtpDeliveryService,
+  ) {}
 
   async registerLab(_body: RegisterLabBody) { throw new GoneException('Direct lab registration is disabled. Use /auth/signup/request-otp and /auth/signup/verify-otp.'); }
 
@@ -41,11 +49,56 @@ export class AuthService {
     ]);
     if (existingLab) throw new ConflictException('Lab code already exists');
     if (existingUser) throw new ConflictException('Email already exists');
+
     await this.prisma.pendingLabRegistration.deleteMany({ where: { OR: [{ code: labCode }, { adminUsername: adminEmail }] } });
     const otp = String(randomInt(100000, 1000000));
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    const pending = await this.prisma.pendingLabRegistration.create({ data: { code: labCode, name: labName, mobile: labMobile, email: optionalString(body.email, 'email'), address: optionalString(body.address, 'address'), adminUsername: adminEmail, adminMobile, adminEmail, adminPasswordHash: this.passwordService.hash(adminPassword), otpHash: this.passwordService.hash(otp), expiresAt }, select: { id: true, expiresAt: true } });
-    return { requestId: pending.id, expiresAt: pending.expiresAt, delivery: 'email', ...(process.env.NODE_ENV === 'production' ? {} : { devOtp: otp }) };
+    const expiresAt = new Date(Date.now() + OTP_TTL_MS);
+    const pending = await this.prisma.pendingLabRegistration.create({
+      data: {
+        code: labCode,
+        name: labName,
+        mobile: labMobile,
+        email: optionalString(body.email, 'email'),
+        address: optionalString(body.address, 'address'),
+        adminUsername: adminEmail,
+        adminMobile,
+        adminEmail,
+        adminPasswordHash: this.passwordService.hash(adminPassword),
+        otpHash: this.passwordService.hash(otp),
+        expiresAt,
+      },
+      select: { id: true, expiresAt: true },
+    });
+
+    try {
+      const delivery = await this.otpDelivery.sendSignupOtp(adminEmail, otp, expiresAt);
+      return { requestId: pending.id, expiresAt: pending.expiresAt, delivery: delivery.mode, ...(process.env.NODE_ENV === 'production' ? {} : { devOtp: otp }) };
+    } catch (error) {
+      await this.prisma.pendingLabRegistration.delete({ where: { id: pending.id } }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async resendSignupOtp(requestIdValue: unknown) {
+    const requestId = requiredString(requestIdValue, 'requestId');
+    const pending = await this.prisma.pendingLabRegistration.findUnique({ where: { id: requestId } });
+    if (!pending) throw new BadRequestException('Signup request not found');
+    if (pending.expiresAt.getTime() < Date.now()) {
+      await this.prisma.pendingLabRegistration.delete({ where: { id: requestId } });
+      throw new BadRequestException('Signup request expired. Please start signup again');
+    }
+    if (Date.now() - pending.updatedAt.getTime() < OTP_RESEND_COOLDOWN_MS) {
+      throw new BadRequestException('Please wait before requesting another OTP');
+    }
+    const otp = String(randomInt(100000, 1000000));
+    const expiresAt = new Date(Date.now() + OTP_TTL_MS);
+    await this.prisma.pendingLabRegistration.update({ where: { id: pending.id }, data: { otpHash: this.passwordService.hash(otp), expiresAt, attempts: 0 } });
+    try {
+      const delivery = await this.otpDelivery.sendSignupOtp(pending.adminEmail ?? pending.adminUsername, otp, expiresAt);
+      return { requestId: pending.id, expiresAt, delivery: delivery.mode, ...(process.env.NODE_ENV === 'production' ? {} : { devOtp: otp }) };
+    } catch (error) {
+      throw error;
+    }
   }
 
   async verifySignupOtp(body: VerifySignupOtpBody) {
