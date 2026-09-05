@@ -5,6 +5,10 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 export function rateLimitMiddleware(options: { windowMs: number; max: number }) {
   const buckets = new Map<string, { startedAt: number; count: number }>();
   return (request: Request, response: Response, next: NextFunction) => {
+    // Browser CORS preflight requests are transport-level negotiation and
+    // should never consume or exhaust the application request quota.
+    if (request.method === 'OPTIONS') return next();
+
     const key = request.ip || request.socket.remoteAddress || 'unknown';
     const now = Date.now();
     const current = buckets.get(key);
