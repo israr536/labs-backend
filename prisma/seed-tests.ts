@@ -7,6 +7,7 @@ import { EXPANDED_TESTS_2 } from '../master-tests/expanded-catalog-2';
 import { enrichCatalogTests } from '../master-tests/catalog-enrichment';
 import { enrichCorePanels } from '../master-tests/panel-enrichment';
 import { validateCatalog } from '../master-tests/catalog-validator';
+import { buildCatalogCompletenessReport } from '../master-tests/catalog-completeness';
 
 // Build the catalog once, then apply reusable enrichment and canonical panel
 // templates before validation and persistence.
@@ -14,33 +15,40 @@ const CATALOG_TESTS = enrichCorePanels(enrichCatalogTests([...MASTER_TESTS, ...E
 if (CATALOG_TESTS.length < 1000) throw new Error(`Master test catalog must contain at least 1000 tests; found ${CATALOG_TESTS.length}`);
 
 const catalogValidation = validateCatalog(CATALOG_TESTS);
-const blockingIssues = catalogValidation.issues.filter((issue) => issue.issue !== 'NUMERIC_PARAMETER_MISSING_REFERENCE_DATA');
-const clinicalReviewIssues = catalogValidation.issues.filter((issue) => issue.issue === 'NUMERIC_PARAMETER_MISSING_REFERENCE_DATA');
+const completeness = buildCatalogCompletenessReport(CATALOG_TESTS, catalogValidation);
 
 console.log('\n=== Master Laboratory Catalog Readiness ===');
 console.log(`Catalog version: ${MASTER_TEST_CATALOG_VERSION}`);
-console.log(`Total tests: ${catalogValidation.totalTests}`);
-console.log(`Tests with parameters: ${catalogValidation.testsWithParameters}`);
-console.log(`Multi-parameter tests/panels: ${catalogValidation.testsWithMultipleParameters}`);
+console.log(`Total tests: ${completeness.totalTests}`);
+console.log(`Ready tests: ${completeness.readyTests}`);
+console.log(`Tests requiring clinical/reference review: ${completeness.testsRequiringClinicalReview}`);
+console.log(`Blocked tests: ${completeness.blockedTests}`);
+console.log(`Test readiness coverage: ${completeness.readinessPercent}%`);
 console.log(`Total parameters: ${catalogValidation.totalParameters}`);
-console.log(`Parameters with units: ${catalogValidation.parametersWithUnits}`);
-console.log(`Parameters with reference data: ${catalogValidation.parametersWithReferenceData}`);
-console.log(`Parameters with input configuration: ${catalogValidation.parametersWithInputConfiguration}`);
-console.log(`Blocking catalog issues: ${blockingIssues.length}`);
-console.log(`Clinical/reference review items: ${clinicalReviewIssues.length}`);
+console.log(`Parameter unit coverage: ${completeness.parameterUnitCoveragePercent}%`);
+console.log(`Parameter reference-data coverage: ${completeness.parameterReferenceCoveragePercent}%`);
+console.log(`Parameter input coverage: ${completeness.parameterInputCoveragePercent}%`);
+console.log(`Multi-parameter tests/panels: ${catalogValidation.testsWithMultipleParameters}`);
+console.log(`Blocking catalog issues: ${completeness.blockingIssues.length}`);
+console.log(`Clinical/reference review items: ${completeness.clinicalReviewIssues.length}`);
 
-if (blockingIssues.length) {
+if (completeness.blockingIssues.length) {
   console.error('\nBlocking catalog issues:');
-  for (const issue of blockingIssues.slice(0, 100)) console.error(`- ${issue.code} | ${issue.name} | ${issue.parameter ?? '-'} | ${issue.issue}`);
-  if (blockingIssues.length > 100) console.error(`...and ${blockingIssues.length - 100} more`);
-  throw new Error(`Catalog validation failed with ${blockingIssues.length} blocking issue(s)`);
+  for (const issue of completeness.blockingIssues.slice(0, 100)) console.error(`- ${issue.code} | ${issue.name} | ${issue.parameter ?? '-'} | ${issue.issue}`);
+  if (completeness.blockingIssues.length > 100) console.error(`...and ${completeness.blockingIssues.length - 100} more`);
+  throw new Error(`Catalog validation failed with ${completeness.blockingIssues.length} blocking issue(s)`);
 }
 
-if (clinicalReviewIssues.length) {
+if (completeness.clinicalReviewIssues.length) {
   console.warn('\nReference-data review items (non-blocking):');
-  for (const issue of clinicalReviewIssues.slice(0, 50)) console.warn(`- ${issue.code} | ${issue.name} | ${issue.parameter ?? '-'} | ${issue.issue}`);
-  if (clinicalReviewIssues.length > 50) console.warn(`...and ${clinicalReviewIssues.length - 50} more`);
+  for (const issue of completeness.clinicalReviewIssues.slice(0, 50)) console.warn(`- ${issue.code} | ${issue.name} | ${issue.parameter ?? '-'} | ${issue.issue}`);
+  if (completeness.clinicalReviewIssues.length > 50) console.warn(`...and ${completeness.clinicalReviewIssues.length - 50} more`);
   console.warn('These ranges require laboratory/method/age/sex/population validation before clinical use.');
+}
+
+console.log('\n=== Readiness by Category ===');
+for (const category of completeness.categoryReadiness) {
+  console.log(`${category.category}: ${category.tests} tests | ready ${category.ready} | clinical review ${category.clinicalReview} | blocked ${category.blocked}`);
 }
 
 const connectionString = process.env.DATABASE_URL;
