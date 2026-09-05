@@ -7,21 +7,95 @@ const useSsl = process.env.DATABASE_SSL === 'true';
 if (!connectionString) throw new Error('DATABASE_URL is required');
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString, ssl: useSsl ? { rejectUnauthorized: false } : false }) });
 
+type RichParameter = {
+  validation?: unknown;
+  criticalLow?: number;
+  criticalHigh?: number;
+  decimalPlaces?: number;
+  defaultValue?: string;
+  formula?: string;
+};
+type RichDefinition = {
+  container?: string;
+  fasting?: boolean;
+  sampleHandling?: string;
+  stability?: string;
+  rejectionCriteria?: string;
+  description?: string;
+  synonyms?: unknown;
+  externalCodes?: unknown;
+};
+
 async function seedDefinitions() {
   let count = 0;
   for (const definition of MASTER_TESTS) {
+    const sourceDefinition = definition as typeof definition & RichDefinition;
     const catalog = await prisma.testDefinition.upsert({
       where: { code: definition.code },
-      update: { shortName: definition.shortName, name: definition.name, category: definition.category, department: definition.department, specimenType: definition.sampleType, method: definition.method, tat: definition.tat, isActive: true },
-      create: { code: definition.code, shortName: definition.shortName, name: definition.name, category: definition.category, department: definition.department, specimenType: definition.sampleType, method: definition.method, tat: definition.tat, isActive: true },
+      update: {
+        shortName: definition.shortName,
+        name: definition.name,
+        category: definition.category,
+        department: definition.department,
+        specimenType: definition.sampleType,
+        container: sourceDefinition.container ?? null,
+        method: definition.method,
+        tat: definition.tat,
+        fasting: sourceDefinition.fasting ?? false,
+        sampleHandling: sourceDefinition.sampleHandling ?? null,
+        stability: sourceDefinition.stability ?? null,
+        rejectionCriteria: sourceDefinition.rejectionCriteria ?? null,
+        description: sourceDefinition.description ?? null,
+        synonyms: sourceDefinition.synonyms ?? undefined,
+        externalCodes: sourceDefinition.externalCodes ?? undefined,
+        isActive: true,
+      },
+      create: {
+        code: definition.code,
+        shortName: definition.shortName,
+        name: definition.name,
+        category: definition.category,
+        department: definition.department,
+        specimenType: definition.sampleType,
+        container: sourceDefinition.container ?? null,
+        method: definition.method,
+        tat: definition.tat,
+        fasting: sourceDefinition.fasting ?? false,
+        sampleHandling: sourceDefinition.sampleHandling ?? null,
+        stability: sourceDefinition.stability ?? null,
+        rejectionCriteria: sourceDefinition.rejectionCriteria ?? null,
+        description: sourceDefinition.description ?? null,
+        synonyms: sourceDefinition.synonyms ?? undefined,
+        externalCodes: sourceDefinition.externalCodes ?? undefined,
+        isActive: true,
+      },
     });
+
     for (const [index, parameter] of definition.parameters.entries()) {
-      const source = parameter as typeof parameter & { validation?: unknown; criticalLow?: number; criticalHigh?: number; decimalPlaces?: number; defaultValue?: string; formula?: string };
+      const source = parameter as typeof parameter & RichParameter;
       const code = `${definition.code}-P${index + 1}`;
+      const data = {
+        name: parameter.name,
+        inputType: parameter.inputType,
+        unit: parameter.unit ?? null,
+        normalMin: parameter.normalMin ?? null,
+        normalMax: parameter.normalMax ?? null,
+        referenceRange: parameter.referenceRange ?? undefined,
+        options: parameter.options ?? undefined,
+        validation: source.validation ?? undefined,
+        criticalLow: source.criticalLow ?? null,
+        criticalHigh: source.criticalHigh ?? null,
+        decimalPlaces: source.decimalPlaces ?? null,
+        defaultValue: source.defaultValue ?? null,
+        formula: source.formula ?? null,
+        displayOrder: parameter.displayOrder ?? index,
+        isRequired: parameter.isRequired ?? true,
+        remarks: parameter.remarks ?? null,
+      };
       await prisma.testDefinitionParameter.upsert({
         where: { testDefinitionId_code: { testDefinitionId: catalog.id, code } },
-        update: { name: parameter.name, inputType: parameter.inputType, unit: parameter.unit ?? null, normalMin: parameter.normalMin ?? null, normalMax: parameter.normalMax ?? null, referenceRange: parameter.referenceRange ?? undefined, options: parameter.options ?? undefined, validation: source.validation ?? undefined, criticalLow: source.criticalLow ?? null, criticalHigh: source.criticalHigh ?? null, decimalPlaces: source.decimalPlaces ?? null, defaultValue: source.defaultValue ?? null, formula: source.formula ?? null, displayOrder: parameter.displayOrder ?? index, isRequired: parameter.isRequired ?? true, remarks: parameter.remarks ?? null },
-        create: { testDefinitionId: catalog.id, code, name: parameter.name, inputType: parameter.inputType, unit: parameter.unit ?? null, normalMin: parameter.normalMin ?? null, normalMax: parameter.normalMax ?? null, referenceRange: parameter.referenceRange ?? undefined, options: parameter.options ?? undefined, validation: source.validation ?? undefined, criticalLow: source.criticalLow ?? null, criticalHigh: source.criticalHigh ?? null, decimalPlaces: source.decimalPlaces ?? null, defaultValue: source.defaultValue ?? null, formula: source.formula ?? null, displayOrder: parameter.displayOrder ?? index, isRequired: parameter.isRequired ?? true, remarks: parameter.remarks ?? null },
+        update: data,
+        create: { testDefinitionId: catalog.id, code, ...data },
       });
     }
     count += 1;
@@ -51,11 +125,34 @@ async function seedLab(labId: string) {
       ? await prisma.test.update({ where: { id: existing.id }, data: { catalogId: catalog.id, shortName: definition.shortName, name: definition.name, category: definition.category, department: definition.department, sampleType: definition.sampleType, method: definition.method, tat: definition.tat, isActive: true } })
       : await prisma.test.create({ data: { labId, catalogId: catalog.id, code: definition.code, shortName: definition.shortName, name: definition.name, category: definition.category, department: definition.department, sampleType: definition.sampleType, method: definition.method, tat: definition.tat, isActive: true } });
     existing ? updatedTests++ : createdTests++;
+
     for (const parameter of catalog.parameters) {
       const current = existing?.parameters.find((item) => item.name === parameter.name);
-      const data = { inputType: parameter.inputType, unit: parameter.unit, normalMin: parameter.normalMin, normalMax: parameter.normalMax, referenceRange: parameter.referenceRange ?? undefined, options: parameter.options ?? undefined, validation: parameter.validation ?? undefined, criticalLow: parameter.criticalLow, criticalHigh: parameter.criticalHigh, decimalPlaces: parameter.decimalPlaces, defaultValue: parameter.defaultValue, formula: parameter.formula, displayOrder: parameter.displayOrder, isRequired: parameter.isRequired, remarks: parameter.remarks };
-      if (!current) { await prisma.testParameter.create({ data: { testId: test.id, name: parameter.name, ...data } }); continue; }
-      const [reportResultCount, orderResultCount] = await Promise.all([prisma.reportResult.count({ where: { parameterId: current.id } }), prisma.orderResult.count({ where: { parameterId: current.id } })]);
+      const data = {
+        inputType: parameter.inputType,
+        unit: parameter.unit,
+        normalMin: parameter.normalMin,
+        normalMax: parameter.normalMax,
+        referenceRange: parameter.referenceRange ?? undefined,
+        options: parameter.options ?? undefined,
+        validation: parameter.validation ?? undefined,
+        criticalLow: parameter.criticalLow,
+        criticalHigh: parameter.criticalHigh,
+        decimalPlaces: parameter.decimalPlaces,
+        defaultValue: parameter.defaultValue,
+        formula: parameter.formula,
+        displayOrder: parameter.displayOrder,
+        isRequired: parameter.isRequired,
+        remarks: parameter.remarks,
+      };
+      if (!current) {
+        await prisma.testParameter.create({ data: { testId: test.id, name: parameter.name, ...data } });
+        continue;
+      }
+      const [reportResultCount, orderResultCount] = await Promise.all([
+        prisma.reportResult.count({ where: { parameterId: current.id } }),
+        prisma.orderResult.count({ where: { parameterId: current.id } }),
+      ]);
       if (reportResultCount || orderResultCount) continue;
       await prisma.testParameter.update({ where: { id: current.id }, data });
     }
@@ -71,4 +168,6 @@ async function main() {
   for (const lab of labs) console.log(`${lab.code}: ${JSON.stringify(await seedLab(lab.id))}`);
 }
 
-main().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => { await prisma.$disconnect(); });
+main()
+  .catch((error) => { console.error(error); process.exitCode = 1; })
+  .finally(async () => { await prisma.$disconnect(); });
