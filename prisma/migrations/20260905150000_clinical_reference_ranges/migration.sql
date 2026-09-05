@@ -1,8 +1,9 @@
 -- Versioned, lab-specific clinical reference ranges.
 -- A range is immutable once created; new clinical definitions are represented by a new version.
+-- IDs are TEXT because the existing Prisma models use TEXT primary keys.
 CREATE TABLE "TestParameterReferenceRange" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-  "parameterId" UUID NOT NULL,
+  "id" TEXT NOT NULL,
+  "parameterId" TEXT NOT NULL,
   "version" INTEGER NOT NULL,
   "gender" "Gender",
   "ageMinYears" DECIMAL(7,2),
@@ -13,9 +14,9 @@ CREATE TABLE "TestParameterReferenceRange" (
   "high" DOUBLE PRECISION,
   "displayRange" TEXT,
   "unit" TEXT,
-  "effectiveFrom" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "effectiveTo" TIMESTAMPTZ,
-  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "effectiveFrom" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "effectiveTo" TIMESTAMP(3),
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "TestParameterReferenceRange_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "TestParameterReferenceRange_parameterId_fkey"
     FOREIGN KEY ("parameterId") REFERENCES "TestParameter"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -39,7 +40,7 @@ CREATE INDEX "TestParameterReferenceRange_parameterId_gender_idx"
   ON "TestParameterReferenceRange"("parameterId", "gender");
 
 ALTER TABLE "OrderResult"
-  ADD COLUMN "referenceRangeId" UUID,
+  ADD COLUMN "referenceRangeId" TEXT,
   ADD COLUMN "referenceRangeSnapshot" JSONB;
 
 ALTER TABLE "OrderResult"
