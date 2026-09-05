@@ -2,8 +2,9 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { MASTER_TESTS, MASTER_TEST_CATALOG_VERSION } from '../master-tests/catalog';
 import { EXPANDED_TESTS } from '../master-tests/expanded-catalog';
+import { EXPANDED_TESTS_2 } from '../master-tests/expanded-catalog-2';
 
-const CATALOG_TESTS = [...MASTER_TESTS, ...EXPANDED_TESTS];
+const CATALOG_TESTS = [...MASTER_TESTS, ...EXPANDED_TESTS, ...EXPANDED_TESTS_2];
 if (CATALOG_TESTS.length < 1000) throw new Error(`Master test catalog must contain at least 1000 tests; found ${CATALOG_TESTS.length}`);
 
 const connectionString = process.env.DATABASE_URL;
