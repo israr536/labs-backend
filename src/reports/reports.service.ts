@@ -21,24 +21,11 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { PdfService } from './pdf.service';
 
-interface ReportBody {
-  patientId?: unknown;
-  testId?: unknown;
-  remarks?: unknown;
-  doctorNotes?: unknown;
-  referredBy?: unknown;
-  sampleCollectedAt?: unknown;
-  results?: unknown;
-}
-interface UpdateReportBody {
-  remarks?: unknown;
-  doctorNotes?: unknown;
-  referredBy?: unknown;
-  sampleCollectedAt?: unknown;
-  results?: unknown;
-}
+interface ReportBody { patientId?: unknown; testId?: unknown; remarks?: unknown; doctorNotes?: unknown; referredBy?: unknown; sampleCollectedAt?: unknown; results?: unknown; }
+interface UpdateReportBody { remarks?: unknown; doctorNotes?: unknown; referredBy?: unknown; sampleCollectedAt?: unknown; results?: unknown; }
 interface ReportResultBody { parameterId?: unknown; value?: unknown; }
 interface FindAllOptions { status?: string; search?: string; patientId?: string; testId?: string; skip?: string; take?: string; }
+type ValidationRule = { min?: number; max?: number; minLength?: number; maxLength?: number; pattern?: string };
 
 @Injectable()
 export class ReportsService {
@@ -50,7 +37,7 @@ export class ReportsService {
     const [lab, patient, test] = await Promise.all([
       this.prisma.lab.findUnique({ where: { id: currentUser.labId } }),
       this.prisma.patient.findFirst({ where: { id: patientId, labId: currentUser.labId } }),
-      this.prisma.test.findFirst({ where: { id: testId, labId: currentUser.labId, isActive: true }, include: { parameters: true } }),
+      this.prisma.test.findFirst({ where: { id: testId, labId: currentUser.labId, isActive: true }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } }),
     ]);
     if (!lab) throw new NotFoundException('Lab not found');
     if (!patient) throw new NotFoundException('Patient not found');
@@ -125,9 +112,7 @@ export class ReportsService {
       });
       if (results !== undefined) {
         const submittedIds = new Set(results.map((result) => result.parameterId));
-        await tx.reportResult.deleteMany({
-          where: { reportId: id, parameterId: { notIn: [...submittedIds] } },
-        });
+        await tx.reportResult.deleteMany({ where: { reportId: id, parameterId: { notIn: [...submittedIds] } } });
         for (const result of results) {
           await tx.reportResult.upsert({
             where: { reportId_parameterId: { reportId: id, parameterId: result.parameterId } },
@@ -160,7 +145,7 @@ export class ReportsService {
       test: { id: report.test.id, name: report.test.name, category: report.test.category },
       results: report.test.parameters.map((parameter) => {
         const result = resultByParameter.get(parameter.id);
-        return { parameterId: parameter.id, name: parameter.name, value: result?.value ?? null, unit: parameter.unit, normalMin: parameter.normalMin, normalMax: parameter.normalMax, normalRange: formatNormalRange(parameter), flag: result?.flag ?? null, inputType: parameter.inputType, displayOrder: parameter.displayOrder };
+        return { parameterId: parameter.id, name: parameter.name, value: result?.value ?? null, unit: parameter.unit, normalMin: parameter.normalMin, normalMax: parameter.normalMax, normalRange: formatNormalRange(parameter), referenceRange: parameter.referenceRange, inputType: parameter.inputType, options: parameter.options, decimalPlaces: parameter.decimalPlaces, criticalLow: parameter.criticalLow, criticalHigh: parameter.criticalHigh, formula: parameter.formula, flag: result?.flag ?? null, displayOrder: parameter.displayOrder, isRequired: parameter.isRequired };
       }),
       approval: { approvedBy: report.approvedBy, createdBy: { id: report.createdBy.id, username: report.createdBy.username, role: report.createdBy.role } },
     };
@@ -184,19 +169,64 @@ export class ReportsService {
   private buildResults(results: ReportResultBody[], parameters: TestParameter[]) {
     const parameterById = new Map(parameters.map((parameter) => [parameter.id, parameter]));
     const seen = new Set<string>();
-    return results.map((result, index) => {
+    const output: Array<{ parameterId: string; value: string; flag: ResultFlag | undefined }> = [];
+    results.forEach((result, index) => {
       const parameterId = requiredString(result.parameterId, `results.${index}.parameterId`);
-      const value = requiredString(result.value, `results.${index}.value`);
       if (seen.has(parameterId)) throw new BadRequestException(`Duplicate result for parameter ${parameterId}`);
       seen.add(parameterId);
       const parameter = parameterById.get(parameterId);
       if (!parameter) throw new BadRequestException(`results.${index}.parameterId does not belong to this test`);
-      return { parameterId, value, flag: this.calculateFlag(parameter, value) };
+      const value = normalizeResultValue(result.value, `results.${index}.value`);
+      // Draft reports may omit required results; finalization enforces required fields.
+      if (value === '') return;
+      this.validateParameterValue(parameter, value, `results.${index}.value`);
+      output.push({ parameterId, value, flag: this.calculateFlag(parameter, value) });
     });
+    return output;
+  }
+
+  private validateParameterValue(parameter: TestParameter, value: string, path: string) {
+    switch (parameter.inputType) {
+      case ParameterInputType.NUMBER:
+      case ParameterInputType.PERCENTAGE: {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) throw new BadRequestException(`${parameter.name} must be a numeric value`);
+        break;
+      }
+      case ParameterInputType.BOOLEAN:
+        if (!['true', 'false', 'yes', 'no', 'positive', 'negative'].includes(value.trim().toLowerCase())) throw new BadRequestException(`${parameter.name} must be a boolean value`);
+        break;
+      case ParameterInputType.DATE:
+      case ParameterInputType.DATETIME:
+      case ParameterInputType.TIME:
+        if (Number.isNaN(Date.parse(value)) && parameter.inputType !== ParameterInputType.TIME) throw new BadRequestException(`${parameter.name} contains an invalid date/time value`);
+        break;
+      case ParameterInputType.SELECT:
+      case ParameterInputType.QUALITATIVE: {
+        const options = Array.isArray(parameter.options) ? parameter.options.filter((item): item is string => typeof item === 'string') : [];
+        if (options.length && !options.includes(value)) throw new BadRequestException(`${parameter.name} must be one of the configured options`);
+        break;
+      }
+      default:
+        break;
+    }
+
+    const rules = isValidationRule(parameter.validation) ? parameter.validation : null;
+    if (!rules) return;
+    if (typeof rules.minLength === 'number' && value.length < rules.minLength) throw new BadRequestException(`${parameter.name} is shorter than the minimum length`);
+    if (typeof rules.maxLength === 'number' && value.length > rules.maxLength) throw new BadRequestException(`${parameter.name} exceeds the maximum length`);
+    const numeric = Number(value);
+    if (typeof rules.min === 'number' && Number.isFinite(numeric) && numeric < rules.min) throw new BadRequestException(`${parameter.name} is below the configured minimum`);
+    if (typeof rules.max === 'number' && Number.isFinite(numeric) && numeric > rules.max) throw new BadRequestException(`${parameter.name} exceeds the configured maximum`);
+    if (typeof rules.pattern === 'string') {
+      let regex: RegExp;
+      try { regex = new RegExp(rules.pattern); } catch { throw new BadRequestException(`${parameter.name} has an invalid catalog validation rule`); }
+      if (!regex.test(value)) throw new BadRequestException(`${parameter.name} has an invalid format`);
+    }
   }
 
   private calculateFlag(parameter: TestParameter, value: string): ResultFlag | undefined {
-    if (parameter.inputType !== ParameterInputType.NUMBER) return undefined;
+    if (parameter.inputType !== ParameterInputType.NUMBER && parameter.inputType !== ParameterInputType.PERCENTAGE) return undefined;
     const numericValue = Number(value);
     if (!Number.isFinite(numericValue)) throw new BadRequestException(`${parameter.name} must be a numeric value`);
     if (parameter.normalMin !== null && numericValue < parameter.normalMin) return ResultFlag.LOW;
@@ -218,6 +248,8 @@ export class ReportsService {
 }
 
 function requiredReportValue(value: string | undefined): boolean { return typeof value === 'string' && value.trim().length > 0; }
+function normalizeResultValue(value: unknown, path: string): string { if (value === undefined || value === null) return ''; if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') throw new BadRequestException(`${path} must be a string, number, or boolean`); return String(value).trim(); }
+function isValidationRule(value: unknown): value is ValidationRule { return typeof value === 'object' && value !== null && !Array.isArray(value); }
 function formatNormalRange(parameter: TestParameter): string | null {
   if (parameter.normalMin === null && parameter.normalMax === null) return null;
   if (parameter.normalMin !== null && parameter.normalMax !== null) return `${parameter.normalMin} - ${parameter.normalMax}`;
