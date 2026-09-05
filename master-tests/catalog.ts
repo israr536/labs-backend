@@ -1,11 +1,17 @@
 export type CatalogParameter = {
   name: string;
-  inputType: 'NUMBER' | 'TEXT' | 'SELECT';
+  inputType: 'NUMBER' | 'TEXT' | 'SELECT' | 'MULTILINE_TEXT' | 'BOOLEAN' | 'DATE' | 'DATETIME' | 'TIME' | 'PERCENTAGE' | 'QUALITATIVE';
   unit?: string;
   normalMin?: number;
   normalMax?: number;
-  referenceRange?: Record<string, string>;
+  referenceRange?: Record<string, string> | Record<string, unknown>;
   options?: string[];
+  validation?: Record<string, unknown>;
+  criticalLow?: number;
+  criticalHigh?: number;
+  decimalPlaces?: number;
+  defaultValue?: string;
+  formula?: string;
   displayOrder?: number;
   isRequired?: boolean;
   remarks?: string;
@@ -20,17 +26,19 @@ export type CatalogTest = {
   sampleType: string;
   method: string;
   tat: number;
+  container?: string;
+  fasting?: boolean;
+  sampleHandling?: string;
+  stability?: string;
+  rejectionCriteria?: string;
+  description?: string;
+  synonyms?: string[];
+  externalCodes?: Record<string, string>;
   parameters: CatalogParameter[];
 };
 
-const n = (name: string, unit: string, min: number, max: number, extra: Partial<CatalogParameter> = {}): CatalogParameter => ({
-  name, inputType: 'NUMBER', unit, normalMin: min, normalMax: max, ...extra,
-});
-
-const s = (name: string, options: string[], extra: Partial<CatalogParameter> = {}): CatalogParameter => ({
-  name, inputType: 'SELECT', options, ...extra,
-});
-
+const n = (name: string, unit: string, min: number, max: number, extra: Partial<CatalogParameter> = {}): CatalogParameter => ({ name, inputType: 'NUMBER', unit, normalMin: min, normalMax: max, ...extra });
+const s = (name: string, options: string[], extra: Partial<CatalogParameter> = {}): CatalogParameter => ({ name, inputType: 'SELECT', options, ...extra });
 const x = (name: string, extra: Partial<CatalogParameter> = {}): CatalogParameter => ({ name, inputType: 'TEXT', ...extra });
 
 const single = (
@@ -44,10 +52,7 @@ const single = (
   min: number,
   max: number,
   method = 'Automated / Standard Laboratory Method',
-): CatalogTest => ({
-  code, shortName, name, category, department, sampleType, method, tat: 6,
-  parameters: [n(name, unit, min, max)],
-});
+): CatalogTest => ({ code, shortName, name, category, department, sampleType, method, tat: 6, parameters: [n(name, unit, min, max)] });
 
 const quantitative: Array<[string,string,string,string,string,string,string,number,number]> = [
   ['BIO001','GLU-F','Fasting Blood Glucose','Diabetes','Biochemistry','Fluoride Plasma','mg/dL',70,99],
@@ -149,76 +154,9 @@ const quantitative: Array<[string,string,string,string,string,string,string,numb
   ['BG001','PH','pH','Blood Gas','Biochemistry','Arterial Blood','',7.35,7.45],
   ['BG002','PCO2','pCO2','Blood Gas','Biochemistry','Arterial Blood','mmHg',35,45],
   ['BG003','PO2','pO2','Blood Gas','Biochemistry','Arterial Blood','mmHg',80,100],
-  ['BG004','HCO3','Bicarbonate','Blood Gas','Biochemistry','Arterial Blood','mmol/L',22,29],
-  ['BG005','SO2','Oxygen Saturation','Blood Gas','Biochemistry','Arterial Blood','%',95,100],
-  ['BG006','BE','Base Excess','Blood Gas','Biochemistry','Arterial Blood','mmol/L',-2,2],
 ];
 
-const baseTests: CatalogTest[] = quantitative.map(([code, shortName, name, category, department, sampleType, unit, min, max]) =>
-  single(code, shortName, name, category, department, sampleType, unit, min, max),
-);
+const quantitativeTests: CatalogTest[] = quantitative.map(([code, shortName, name, category, department, sampleType, unit, min, max]) => single(code, shortName, name, category, department, sampleType, unit, min, max));
 
-const qualitativeTests: CatalogTest[] = [
-  { code:'SER001',shortName:'HIV',name:'HIV 1 & 2 Antibody',category:'Infectious Serology',department:'Serology',sampleType:'Serum',method:'Immunoassay',tat:8,parameters:[s('HIV 1 & 2 Antibody',['Negative','Positive','Equivocal'])] },
-  { code:'SER002',shortName:'HBSAG',name:'HBsAg',category:'Hepatitis',department:'Serology',sampleType:'Serum',method:'Immunoassay',tat:8,parameters:[s('HBsAg',['Negative','Positive','Equivocal'])] },
-  { code:'SER003',shortName:'HCV',name:'Anti-HCV',category:'Hepatitis',department:'Serology',sampleType:'Serum',method:'Immunoassay',tat:8,parameters:[s('Anti-HCV',['Negative','Positive','Equivocal'])] },
-  { code:'SER004',shortName:'DENGUE-NS1',name:'Dengue NS1 Antigen',category:'Dengue',department:'Serology',sampleType:'Serum',method:'Rapid/Immunoassay',tat:8,parameters:[s('Dengue NS1 Antigen',['Negative','Positive','Equivocal'])] },
-  { code:'SER005',shortName:'DENGUE-IGM',name:'Dengue IgM',category:'Dengue',department:'Serology',sampleType:'Serum',method:'Immunoassay',tat:8,parameters:[s('Dengue IgM',['Negative','Positive','Equivocal'])] },
-  { code:'SER006',shortName:'MALARIA',name:'Malaria Antigen',category:'Malaria',department:'Serology',sampleType:'Whole Blood',method:'Rapid Antigen Test',tat:8,parameters:[s('Malaria Antigen',['Negative','Positive'])] },
-  { code:'SER007',shortName:'VDRL',name:'VDRL',category:'Syphilis',department:'Serology',sampleType:'Serum',method:'Flocculation',tat:8,parameters:[s('VDRL',['Non-reactive','Reactive'])] },
-  { code:'BB001',shortName:'ABO',name:'ABO Blood Group',category:'Blood Bank',department:'Transfusion Medicine',sampleType:'Whole Blood',method:'Hemagglutination',tat:8,parameters:[s('ABO Group',['A','B','AB','O'])] },
-  { code:'BB002',shortName:'RH',name:'Rh(D) Typing',category:'Blood Bank',department:'Transfusion Medicine',sampleType:'Whole Blood',method:'Hemagglutination',tat:8,parameters:[s('Rh(D)',['Positive','Negative'])] },
-  { code:'BB003',shortName:'DAT',name:'Direct Antiglobulin Test',category:'Blood Bank',department:'Transfusion Medicine',sampleType:'Whole Blood',method:'Gel/Tube Method',tat:8,parameters:[s('DAT',['Negative','Positive'])] },
-  { code:'MIC001',shortName:'URINE-CULT',name:'Urine Culture',category:'Microbiology',department:'Microbiology',sampleType:'Urine',method:'Culture',tat:48,parameters:[x('Organism / Result')] },
-  { code:'MIC002',shortName:'BLOOD-CULT',name:'Blood Culture',category:'Microbiology',department:'Microbiology',sampleType:'Blood',method:'Automated Culture',tat:72,parameters:[x('Organism / Result')] },
-  { code:'MIC003',shortName:'AFB',name:'AFB Smear',category:'Microbiology',department:'Microbiology',sampleType:'Sputum',method:'Ziehl-Neelsen Stain',tat:24,parameters:[x('Microscopy Result')] },
-  { code:'MOL001',shortName:'TB-PCR',name:'Mycobacterium tuberculosis PCR',category:'Molecular Diagnostics',department:'Molecular Biology',sampleType:'Sputum',method:'PCR',tat:24,parameters:[s('Result',['Negative','Positive','Indeterminate'])] },
-  { code:'MOL002',shortName:'HPV-PCR',name:'High Risk HPV DNA',category:'Molecular Diagnostics',department:'Molecular Biology',sampleType:'Cervical Swab',method:'PCR',tat:24,parameters:[s('Result',['Not Detected','Detected','Invalid'])] },
-  { code:'PRE001',shortName:'PREG',name:'Pregnancy Test',category:'Prenatal',department:'Clinical Pathology',sampleType:'Urine',method:'Immunochromatography',tat:4,parameters:[s('Pregnancy Test',['Negative','Positive'])] },
-  { code:'PAT001',shortName:'PAP',name:'Pap Smear Cytology',category:'Cytology',department:'Histopathology',sampleType:'Cervical Smear',method:'Cytology',tat:72,parameters:[x('Findings'),x('Impression',{displayOrder:2})] },
-  { code:'PAT002',shortName:'FNAC',name:'Fine Needle Aspiration Cytology',category:'Cytology',department:'Histopathology',sampleType:'Aspirate',method:'Cytology',tat:48,parameters:[x('Findings'),x('Impression',{displayOrder:2})] },
-];
-
-const panels: CatalogTest[] = [
-  { code:'PAN001',shortName:'CBC',name:'Complete Blood Count',category:'Hematology Panel',department:'Hematology',sampleType:'Whole Blood',method:'Automated Hematology Analyzer',tat:6,parameters:[
-    n('Hemoglobin','g/dL',13.5,17.5,{referenceRange:{MALE:'13.5-17.5',FEMALE:'12.0-15.5'}}),n('Total Leukocyte Count','cells/cumm',4000,11000,{displayOrder:2}),n('RBC Count','million/cumm',4.5,5.9,{displayOrder:3,referenceRange:{MALE:'4.5-5.9',FEMALE:'4.1-5.1'}}),n('Platelet Count','lakhs/cumm',1.5,4.5,{displayOrder:4}),n('Hematocrit','%',40,52,{displayOrder:5}),n('MCV','fL',80,100,{displayOrder:6}),n('MCH','pg',27,33,{displayOrder:7}),n('MCHC','g/dL',32,36,{displayOrder:8}),n('RDW-CV','%',11.5,14.5,{displayOrder:9})
-  ]},
-  { code:'PAN002',shortName:'LFT',name:'Liver Function Test',category:'Liver Profile',department:'Biochemistry',sampleType:'Serum',method:'Automated Chemistry Analyzer',tat:6,parameters:[
-    n('Total Bilirubin','mg/dL',0.2,1.2),n('Direct Bilirubin','mg/dL',0,0.3,{displayOrder:2}),n('AST / SGOT','U/L',10,40,{displayOrder:3}),n('ALT / SGPT','U/L',7,56,{displayOrder:4}),n('ALP','U/L',44,147,{displayOrder:5}),n('Total Protein','g/dL',6,8.3,{displayOrder:6}),n('Albumin','g/dL',3.5,5,{displayOrder:7})
-  ]},
-  { code:'PAN003',shortName:'RFT',name:'Renal Function Test',category:'Renal Profile',department:'Biochemistry',sampleType:'Serum',method:'Automated Chemistry Analyzer',tat:6,parameters:[
-    n('Urea','mg/dL',15,45),n('Creatinine','mg/dL',0.6,1.3,{displayOrder:2}),n('Uric Acid','mg/dL',3.5,7.2,{displayOrder:3}),n('Sodium','mmol/L',135,145,{displayOrder:4}),n('Potassium','mmol/L',3.5,5.1,{displayOrder:5}),n('Chloride','mmol/L',98,107,{displayOrder:6})
-  ]},
-  { code:'PAN004',shortName:'LIPID',name:'Lipid Profile',category:'Lipid Profile',department:'Biochemistry',sampleType:'Serum',method:'Automated Chemistry Analyzer',tat:6,parameters:[
-    n('Total Cholesterol','mg/dL',0,199),n('Triglycerides','mg/dL',0,149,{displayOrder:2}),n('HDL Cholesterol','mg/dL',40,100,{displayOrder:3}),n('LDL Cholesterol','mg/dL',0,99,{displayOrder:4}),n('VLDL Cholesterol','mg/dL',5,40,{displayOrder:5}),n('Non-HDL Cholesterol','mg/dL',0,129,{displayOrder:6})
-  ]},
-  { code:'PAN005',shortName:'THYROID',name:'Thyroid Profile',category:'Thyroid Profile',department:'Endocrinology',sampleType:'Serum',method:'Chemiluminescent Immunoassay',tat:8,parameters:[
-    n('T3','ng/dL',80,200),n('T4','µg/dL',4.5,11.7,{displayOrder:2}),n('TSH','µIU/mL',0.3,4.2,{displayOrder:3})
-  ]},
-  { code:'PAN006',shortName:'FT-THYROID',name:'Thyroid Profile Free',category:'Thyroid Profile',department:'Endocrinology',sampleType:'Serum',method:'Chemiluminescent Immunoassay',tat:8,parameters:[
-    n('Free T3','pg/mL',2,4.4),n('Free T4','ng/dL',0.9,1.7,{displayOrder:2}),n('TSH','µIU/mL',0.3,4.2,{displayOrder:3})
-  ]},
-  { code:'PAN007',shortName:'DIABETES',name:'Diabetes Profile',category:'Diabetes',department:'Biochemistry',sampleType:'Blood / Serum',method:'Chemistry + Immunoassay',tat:8,parameters:[
-    n('Fasting Glucose','mg/dL',70,99),n('Post Prandial Glucose','mg/dL',70,140,{displayOrder:2}),n('HbA1c','%',4,5.6,{displayOrder:3}),n('Estimated Average Glucose','mg/dL',70,117,{displayOrder:4})
-  ]},
-  { code:'PAN008',shortName:'CARDIAC',name:'Cardiac Biomarkers Panel',category:'Cardiac Markers',department:'Biochemistry',sampleType:'Serum',method:'Immunoassay',tat:8,parameters:[
-    n('Troponin I','ng/mL',0,0.04),n('CK-MB','ng/mL',0,5,{displayOrder:2}),n('Myoglobin','ng/mL',25,72,{displayOrder:3}),n('BNP','pg/mL',0,100,{displayOrder:4})
-  ]},
-  { code:'PAN009',shortName:'IRON',name:'Iron Profile',category:'Iron Studies',department:'Biochemistry',sampleType:'Serum',method:'Chemistry + Immunoassay',tat:8,parameters:[
-    n('Serum Iron','µg/dL',60,170),n('TIBC','µg/dL',250,450,{displayOrder:2}),n('Ferritin','ng/mL',24,336,{displayOrder:3}),n('Transferrin Saturation','%',20,50,{displayOrder:4})
-  ]},
-  { code:'PAN010',shortName:'TORCH',name:'TORCH Profile',category:'Prenatal Screening',department:'Serology',sampleType:'Serum',method:'Immunoassay',tat:24,parameters:[
-    s('Toxoplasma IgM',['Negative','Positive','Equivocal']),s('Toxoplasma IgG',['Negative','Positive','Equivocal'],{displayOrder:2}),s('Rubella IgM',['Negative','Positive','Equivocal'],{displayOrder:3}),s('Rubella IgG',['Negative','Positive','Equivocal'],{displayOrder:4}),s('CMV IgM',['Negative','Positive','Equivocal'],{displayOrder:5}),s('CMV IgG',['Negative','Positive','Equivocal'],{displayOrder:6})
-  ]},
-];
-
-export const MASTER_TESTS: CatalogTest[] = [...baseTests, ...qualitativeTests, ...panels].map((test) => ({
-  ...test,
-  parameters: test.parameters.map((parameter, index) => ({
-    ...parameter,
-    displayOrder: parameter.displayOrder ?? index + 1,
-    isRequired: parameter.isRequired ?? true,
-  })),
-}));
-
-export const MASTER_TEST_CATALOG_VERSION = '2026.09.04';
+export const MASTER_TESTS: CatalogTest[] = quantitativeTests;
+export const MASTER_TEST_CATALOG_VERSION = '2026.09.05';
