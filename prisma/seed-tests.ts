@@ -4,8 +4,12 @@ import { PrismaClient } from '@prisma/client';
 import { MASTER_TESTS, MASTER_TEST_CATALOG_VERSION } from '../master-tests/catalog';
 import { EXPANDED_TESTS } from '../master-tests/expanded-catalog';
 import { EXPANDED_TESTS_2 } from '../master-tests/expanded-catalog-2';
+import { enrichCatalogTests } from '../master-tests/catalog-enrichment';
 
-const CATALOG_TESTS = [...MASTER_TESTS, ...EXPANDED_TESTS, ...EXPANDED_TESTS_2];
+// The database receives the curated master tests plus the expanded catalog.
+// Enrichment reuses complete curated definitions (including panel parameters,
+// units, options and reference data) whenever the expanded name matches one.
+const CATALOG_TESTS = enrichCatalogTests([...MASTER_TESTS, ...EXPANDED_TESTS, ...EXPANDED_TESTS_2]);
 if (CATALOG_TESTS.length < 1000) throw new Error(`Master test catalog must contain at least 1000 tests; found ${CATALOG_TESTS.length}`);
 
 const connectionString = process.env.DATABASE_URL;
