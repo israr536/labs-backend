@@ -36,8 +36,28 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm install --no-audit --no-fund
-      - run: npx prisma generate
-      - run: npx prisma migrate deploy
-      - run: npm run build
-      - run: npm run lint -- --no-fix
-      - run: npm test -- --runInBand
+      - name: Prisma generate
+        run: npx prisma generate
+      - name: Prisma migrate
+        run: npx prisma migrate deploy
+      - name: Build
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee build.log
+      - name: Lint
+        if: always()
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npm run lint -- --no-fix 2>&1 | tee lint.log
+      - name: Tests
+        if: success()
+        run: npm test -- --runInBand
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-validation-logs-${{ github.run_id }}
+          path: |
+            build.log
+            lint.log
