@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuthController } from './auth.controller';
 import { AuthGuard } from './auth.guard';
 import { AuthService } from './auth.service';
+import { OtpDeliveryService } from './otp-delivery.service';
 import { PasswordService } from './password.service';
 import { RolesGuard } from './roles.guard';
 import { TokenService } from './token.service';
@@ -11,6 +12,7 @@ import { TokenService } from './token.service';
   providers: [
     AuthService,
     AuthGuard,
+    OtpDeliveryService,
     PasswordService,
     RolesGuard,
     TokenService,
