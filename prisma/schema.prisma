@@ -33,6 +33,13 @@ enum ParameterInputType {
   NUMBER
   TEXT
   SELECT
+  MULTILINE_TEXT
+  BOOLEAN
+  DATE
+  DATETIME
+  TIME
+  PERCENTAGE
+  QUALITATIVE
 }
 
 enum OrderStatus {
@@ -74,12 +81,12 @@ model Lab {
   email               String?
   address             String?
   icon                String?
-  isActive             Boolean   @default(true)
+  isActive            Boolean   @default(true)
   subscriptionPlan    String?
   subscriptionStartAt DateTime?
   subscriptionEndAt   DateTime?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   patients Patient[]
   reports  Report[]
@@ -135,9 +142,69 @@ model Patient {
   @@index([labId])
 }
 
+model TestDefinition {
+  id             String   @id @default(uuid())
+  code           String   @unique
+  shortName      String?
+  name           String
+  category       String
+  department     String
+  specimenType   String?
+  container      String?
+  method         String?
+  tat            Int?
+  fasting        Boolean  @default(false)
+  sampleHandling String?
+  stability      String?
+  rejectionCriteria String?
+  description    String?
+  synonyms       Json?
+  externalCodes  Json?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  parameters TestDefinitionParameter[]
+  tests      Test[]
+
+  @@index([category])
+  @@index([department])
+  @@index([name])
+  @@index([isActive])
+}
+
+model TestDefinitionParameter {
+  id               String             @id @default(uuid())
+  testDefinitionId String
+  code             String
+  name             String
+  shortName        String?
+  inputType        ParameterInputType @default(NUMBER)
+  unit             String?
+  normalMin        Float?
+  normalMax        Float?
+  referenceRange   Json?
+  options          Json?
+  validation       Json?
+  criticalLow      Float?
+  criticalHigh     Float?
+  decimalPlaces    Int?
+  defaultValue     String?
+  formula          String?
+  displayOrder     Int                @default(0)
+  isRequired       Boolean            @default(true)
+  remarks          String?
+
+  testDefinition TestDefinition @relation(fields: [testDefinitionId], references: [id], onDelete: Cascade)
+
+  @@unique([testDefinitionId, code])
+  @@index([testDefinitionId, displayOrder])
+}
+
 model Test {
   id          String   @id @default(uuid())
   labId       String
+  catalogId   String?
   code        String
   shortName   String?
   name        String
@@ -153,11 +220,13 @@ model Test {
   updatedAt   DateTime @updatedAt
 
   lab         Lab             @relation(fields: [labId], references: [id])
+  catalog     TestDefinition? @relation(fields: [catalogId], references: [id], onDelete: SetNull)
   parameters  TestParameter[]
   reports     Report[]
   orderItems  OrderItem[]
 
   @@index([labId])
+  @@index([labId, catalogId])
   @@index([category])
   @@index([department])
   @@unique([labId, code])
@@ -173,6 +242,12 @@ model TestParameter {
   normalMax        Float?
   referenceRange   Json?
   options          Json?
+  validation       Json?
+  criticalLow      Float?
+  criticalHigh     Float?
+  decimalPlaces    Int?
+  defaultValue     String?
+  formula          String?
   displayOrder     Int                @default(0)
   isRequired       Boolean            @default(true)
   remarks          String?
@@ -304,8 +379,8 @@ model Sample {
   collectedAt      DateTime?
   receivedAt       DateTime?
   rejectedReason   String?
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
   lab     Lab           @relation(fields: [labId], references: [id])
   order   LabOrder      @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -390,7 +465,7 @@ model PendingLabRegistration {
   code              String
   name              String
   mobile             String
-  email              String?
+  email             String?
   address            String?
   adminUsername      String
   adminMobile        String
