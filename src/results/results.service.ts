@@ -136,7 +136,7 @@ export class ResultsService {
     if (rules.maxLength != null && value.length > rules.maxLength) throw new BadRequestException(`results.${index}.value exceeds the maximum length`);
     if (rules.minLength != null && value.length < rules.minLength) throw new BadRequestException(`results.${index}.value is shorter than the minimum length`);
     if (rules.pattern) { let matches = false; try { matches = new RegExp(rules.pattern).test(value); } catch { throw new BadRequestException('Invalid validation pattern for parameter'); } if (!matches) throw new BadRequestException(`results.${index}.value has an invalid format`); }
-    if ([ParameterInputType.NUMBER, ParameterInputType.PERCENTAGE].includes(parameter.inputType)) {
+    if (parameter.inputType === ParameterInputType.NUMBER || parameter.inputType === ParameterInputType.PERCENTAGE) {
       const numberValue = Number(value);
       if (!Number.isFinite(numberValue)) throw new BadRequestException(`results.${index}.value must be numeric`);
       if (rules.min != null && numberValue < rules.min) throw new BadRequestException(`results.${index}.value is below the allowed minimum`);
@@ -146,7 +146,7 @@ export class ResultsService {
         if ((value.split('.')[1] ?? '').length > parameter.decimalPlaces) throw new BadRequestException(`results.${index}.value allows at most ${parameter.decimalPlaces} decimal places`);
       }
     }
-    if ([ParameterInputType.SELECT, ParameterInputType.QUALITATIVE].includes(parameter.inputType)) {
+    if (parameter.inputType === ParameterInputType.SELECT || parameter.inputType === ParameterInputType.QUALITATIVE) {
       if (!Array.isArray(parameter.options) || !parameter.options.length) throw new BadRequestException('Qualitative parameter has no configured options');
       const options = parameter.options.filter((option): option is string => typeof option === 'string');
       if (!options.includes(value)) throw new BadRequestException(`results.${index}.value must be one of the configured options`);
