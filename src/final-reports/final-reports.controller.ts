@@ -6,17 +6,21 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/auth.types';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
+import { FinalReportWorkflowService } from './final-report-workflow.service';
 import { FinalReportsService } from './final-reports.service';
 
 @UseGuards(AuthGuard, RolesGuard)
 @Controller('orders')
 export class FinalReportsController {
-  constructor(private readonly finalReportsService: FinalReportsService) {}
+  constructor(
+    private readonly finalReportsService: FinalReportsService,
+    private readonly workflow: FinalReportWorkflowService,
+  ) {}
 
   @Roles(UserRole.ADMIN, UserRole.PATHOLOGIST)
   @Post(':orderId/finalize')
   finalize(@CurrentUser() user: AuthUser, @Param('orderId') orderId: string) {
-    return this.finalReportsService.finalize(user, orderId);
+    return this.workflow.finalize(user, orderId);
   }
 
   @Get(':orderId/report')
@@ -32,7 +36,13 @@ export class FinalReportsController {
   @Roles(UserRole.ADMIN, UserRole.PATHOLOGIST)
   @Post(':orderId/report/amend')
   amend(@CurrentUser() user: AuthUser, @Param('orderId') orderId: string, @Body() body: { reason?: unknown }) {
-    return this.finalReportsService.amend(user, orderId, body?.reason);
+    return this.workflow.startAmendment(user, orderId, body?.reason);
+  }
+
+  @Roles(UserRole.ADMIN, UserRole.PATHOLOGIST)
+  @Post(':orderId/report/amend/release')
+  releaseAmendment(@CurrentUser() user: AuthUser, @Param('orderId') orderId: string) {
+    return this.workflow.releaseAmendment(user, orderId);
   }
 
   @Get(':orderId/report/pdf')
