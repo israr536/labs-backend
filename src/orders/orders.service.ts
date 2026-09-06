@@ -46,19 +46,24 @@ export class OrdersService {
   async findOne(currentUser: AuthUser, id: string) {
     const items = await this.prisma.orderItem.findMany({
       where: { orderId: id, order: { labId: currentUser.labId } },
-      select: { testId: true, test: { select: { id: true, code: true, catalogId: true, parameters: true } } },
+      select: { testId: true, test: { select: { id: true, code: true, name: true, catalogId: true, parameters: true } } },
     });
 
+    // Repair incomplete lab test panels on demand. We compare parameter names
+    // rather than counts so partially configured tests are also repaired.
     for (const item of items) {
       const test = item.test;
       const definition = test.catalogId
-        ? await this.prisma.testDefinition.findFirst({ where: { id: test.catalogId }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } })
-        : await this.prisma.testDefinition.findFirst({ where: { code: test.code }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } });
-      if (!definition || definition.parameters.length <= test.parameters.length) continue;
+        ? await this.prisma.testDefinition.findFirst({ where: { id: test.catalogId, isActive: true }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } })
+        : await this.prisma.testDefinition.findFirst({ where: { code: test.code, isActive: true }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } });
+      if (!definition || !definition.parameters.length) continue;
 
       const existingNames = new Set(test.parameters.map((parameter) => parameter.name.trim().toLowerCase()));
       const missing = definition.parameters.filter((parameter) => !existingNames.has(parameter.name.trim().toLowerCase()));
-      if (!missing.length) continue;
+      if (!missing.length) {
+        if (!test.catalogId) await this.prisma.test.update({ where: { id: test.id }, data: { catalogId: definition.id } });
+        continue;
+      }
 
       await this.prisma.$transaction(async (tx) => {
         await tx.testParameter.createMany({
