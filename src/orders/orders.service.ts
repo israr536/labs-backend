@@ -1,6 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { OrderStatus, Prisma } from '@prisma/client';
-import { AuthUser } from '../auth/auth.types';
 import { optionalString, requiredString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionService } from '../labs/subscription.service';
@@ -44,7 +43,54 @@ export class OrdersService {
   }
 
   async findOne(currentUser: AuthUser, id: string) {
-    const order = await this.prisma.labOrder.findFirst({ where: { id, labId: currentUser.labId }, include: { patient: true, items: { include: { test: { include: { parameters: true } }, results: true } }, samples: true, createdBy: { select: { id: true, username: true, role: true } } } });
+    // Older lab test records can contain only a subset of their catalog
+    // parameters. Before returning an order, synchronize missing parameters
+    // from the linked catalog definition. This is additive only: existing
+    // parameters and any previously entered results are never deleted/changed.
+    const items = await this.prisma.labOrderItem.findMany({
+      where: { orderId: id, order: { labId: currentUser.labId } },
+      select: { testId: true, test: { select: { id: true, code: true, catalogId: true, parameters: true } } },
+    });
+
+    for (const item of items) {
+      const test = item.test;
+      const definition = test.catalogId
+        ? await this.prisma.testDefinition.findFirst({ where: { id: test.catalogId }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } })
+        : await this.prisma.testDefinition.findFirst({ where: { code: test.code }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } });
+      if (!definition || definition.parameters.length <= test.parameters.length) continue;
+
+      const existingNames = new Set(test.parameters.map((parameter) => parameter.name.trim().toLowerCase()));
+      const missing = definition.parameters.filter((parameter) => !existingNames.has(parameter.name.trim().toLowerCase()));
+      if (!missing.length) continue;
+
+      await this.prisma.$transaction(async (tx) => {
+        await tx.testParameter.createMany({
+          data: missing.map((parameter, index) => ({
+            testId: test.id,
+            name: parameter.name,
+            inputType: parameter.inputType,
+            unit: parameter.unit ?? null,
+            normalMin: parameter.normalMin ?? null,
+            normalMax: parameter.normalMax ?? null,
+            referenceRange: parameter.referenceRange ?? undefined,
+            options: parameter.options ?? undefined,
+            validation: parameter.validation ?? undefined,
+            criticalLow: parameter.criticalLow ?? null,
+            criticalHigh: parameter.criticalHigh ?? null,
+            decimalPlaces: parameter.decimalPlaces ?? null,
+            defaultValue: parameter.defaultValue ?? null,
+            formula: parameter.formula ?? null,
+            displayOrder: parameter.displayOrder ?? (test.parameters.length + index),
+            isRequired: parameter.isRequired ?? true,
+            remarks: parameter.remarks ?? null,
+          })),
+          skipDuplicates: true,
+        });
+        if (!test.catalogId) await tx.test.update({ where: { id: test.id }, data: { catalogId: definition.id } });
+      });
+    }
+
+    const order = await this.prisma.labOrder.findFirst({ where: { id, labId: currentUser.labId }, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } }, results: true } }, samples: true, createdBy: { select: { id: true, username: true, role: true } } } });
     if (!order) throw new NotFoundException('Order not found');
     return { ...order, results: order.items.flatMap((item) => item.results) };
   }
