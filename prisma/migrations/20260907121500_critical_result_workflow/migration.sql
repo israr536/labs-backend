@@ -2,12 +2,12 @@ CREATE TYPE "CriticalResultStatus" AS ENUM ('PENDING', 'NOTIFIED', 'ACKNOWLEDGED
 CREATE TYPE "CriticalNotificationMethod" AS ENUM ('PHONE', 'IN_PERSON', 'ELECTRONIC', 'OTHER');
 
 CREATE TABLE "CriticalResult" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-  "labId" UUID NOT NULL,
-  "orderResultId" UUID NOT NULL,
-  "patientId" UUID NOT NULL,
-  "testId" UUID NOT NULL,
-  "parameterId" UUID NOT NULL,
+  "id" TEXT NOT NULL DEFAULT gen_random_uuid()::text,
+  "labId" TEXT NOT NULL,
+  "orderResultId" TEXT NOT NULL,
+  "patientId" TEXT NOT NULL,
+  "testId" TEXT NOT NULL,
+  "parameterId" TEXT NOT NULL,
   "occurrence" INTEGER NOT NULL DEFAULT 1,
   "value" TEXT NOT NULL,
   "unit" TEXT,
@@ -19,9 +19,9 @@ CREATE TABLE "CriticalResult" (
   "detectedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "notifiedAt" TIMESTAMP(3),
   "notifiedTo" TEXT,
-  "notifiedById" UUID,
+  "notifiedById" TEXT,
   "acknowledgedAt" TIMESTAMP(3),
-  "acknowledgedById" UUID,
+  "acknowledgedById" TEXT,
   "acknowledgementNote" TEXT,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -42,9 +42,9 @@ CREATE INDEX "CriticalResult_patientId_idx" ON "CriticalResult"("patientId");
 CREATE INDEX "CriticalResult_parameterId_idx" ON "CriticalResult"("parameterId");
 
 CREATE TABLE "CriticalNotificationAttempt" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-  "criticalResultId" UUID NOT NULL,
-  "labId" UUID NOT NULL,
+  "id" TEXT NOT NULL DEFAULT gen_random_uuid()::text,
+  "criticalResultId" TEXT NOT NULL,
+  "labId" TEXT NOT NULL,
   "method" "CriticalNotificationMethod" NOT NULL,
   "attemptedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "contactedName" TEXT,
@@ -52,7 +52,7 @@ CREATE TABLE "CriticalNotificationAttempt" (
   "successful" BOOLEAN NOT NULL DEFAULT false,
   "readBackConfirmed" BOOLEAN NOT NULL DEFAULT false,
   "notes" TEXT,
-  "attemptedById" UUID NOT NULL,
+  "attemptedById" TEXT NOT NULL,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "CriticalNotificationAttempt_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "CriticalNotificationAttempt_criticalResultId_fkey" FOREIGN KEY ("criticalResultId") REFERENCES "CriticalResult"("id") ON DELETE CASCADE ON UPDATE CASCADE,
@@ -66,16 +66,16 @@ CREATE OR REPLACE FUNCTION "sync_critical_result"() RETURNS trigger AS $$
 DECLARE
   critical_low DOUBLE PRECISION;
   critical_high DOUBLE PRECISION;
-  lab_id UUID;
-  patient_id UUID;
-  test_id UUID;
+  lab_id TEXT;
+  patient_id TEXT;
+  test_id TEXT;
   unit_value TEXT;
   numeric_value DOUBLE PRECISION;
   direction_value TEXT;
   threshold_value DOUBLE PRECISION;
   current_record RECORD;
   next_occurrence INTEGER;
-  new_id UUID;
+  new_id TEXT;
 BEGIN
   SELECT tp."criticalLow", tp."criticalHigh", tp."unit", lo."labId", lo."patientId", oi."testId"
     INTO critical_low, critical_high, unit_value, lab_id, patient_id, test_id
