@@ -4,6 +4,10 @@ import { PrismaService } from '../prisma/prisma.service';
 
 const METHODS = ['PHONE', 'IN_PERSON', 'ELECTRONIC', 'OTHER'] as const;
 type NotificationMethod = (typeof METHODS)[number];
+type CriticalResultRecord = Record<string, unknown> & {
+  status: string;
+  notificationAttempts: Record<string, unknown>[];
+};
 
 @Injectable()
 export class CriticalResultsService {
@@ -11,7 +15,7 @@ export class CriticalResultsService {
 
   /** Critical thresholds are laboratory-configured; this service never invents them. */
   async listPending(labId: string) {
-    return this.prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
+    return this.prisma.$queryRaw<CriticalResultRecord[]>(Prisma.sql`
       SELECT
         cr."id", cr."orderResultId", cr."patientId", cr."testId", cr."parameterId",
         cr."occurrence", cr."value", cr."unit", cr."direction", cr."criticalThreshold",
@@ -40,7 +44,7 @@ export class CriticalResultsService {
     `);
   }
 
-  async getOne(labId: string, id: string) {
+  async getOne(labId: string, id: string): Promise<CriticalResultRecord> {
     const rows = await this.prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       SELECT cr.*, p."name" AS "patientName", t."name" AS "testName",
              tp."name" AS "parameterName", tp."unit" AS "parameterUnit"
@@ -59,7 +63,7 @@ export class CriticalResultsService {
       WHERE "criticalResultId" = ${id}::uuid AND "labId" = ${labId}::uuid
       ORDER BY "attemptedAt" DESC
     `);
-    return { ...rows[0], notificationAttempts: attempts };
+    return { ...rows[0], notificationAttempts: attempts } as CriticalResultRecord;
   }
 
   async acknowledge(labId: string, id: string, userId: string, note?: string) {
@@ -98,56 +102,48 @@ export class CriticalResultsService {
     userId: string,
     data: {
       method: string;
-      successful: boolean;
-      recipient?: string;
+      contactedName?: string;
       contactDetails?: string;
+      successful: boolean;
       readBackConfirmed?: boolean;
-      note?: string;
+      notes?: string;
     },
   ) {
-    const method = data.method?.trim().toUpperCase() as NotificationMethod;
-    if (!METHODS.includes(method)) throw new BadRequestException(`Unsupported notification method: ${data.method}`);
-    if (typeof data.successful !== 'boolean') throw new BadRequestException('successful must be a boolean');
-
-    const recipient = data.recipient?.trim() || null;
-    const contactDetails = data.contactDetails?.trim() || null;
-    const notes = data.note?.trim() || null;
-    const readBackConfirmed = data.readBackConfirmed === true;
-
-    if (data.successful && !recipient) throw new BadRequestException('Recipient name is required for a successful notification');
-    if (data.successful && (method === 'PHONE' || method === 'ELECTRONIC') && !readBackConfirmed) {
-      throw new BadRequestException('Read-back/receipt confirmation is required for successful phone or electronic notification');
+    const result = await this.getOne(labId, id);
+    if (result.status === 'ACKNOWLEDGED' || result.status === 'SUPERSEDED') {
+      throw new BadRequestException('This critical result is no longer open');
+    }
+    if (!METHODS.includes(data.method as NotificationMethod)) {
+      throw new BadRequestException('Invalid notification method');
+    }
+    if (data.successful && (data.method === 'PHONE' || data.method === 'ELECTRONIC') && !data.readBackConfirmed) {
+      throw new BadRequestException('Read-back or receipt confirmation is required for successful phone/electronic notification');
+    }
+    if (data.successful && !data.contactedName?.trim()) {
+      throw new BadRequestException('Contacted person is required for a successful notification');
     }
 
-    await this.getOne(labId, id);
+    const attemptedAt = new Date();
     await this.prisma.$transaction(async (tx) => {
-      const current = await tx.$queryRaw<Array<{ status: string; isCurrent: boolean }>>(Prisma.sql`
-        SELECT "status", "isCurrent"
-        FROM "CriticalResult"
-        WHERE "id" = ${id}::uuid AND "labId" = ${labId}::uuid
-        FOR UPDATE
-      `);
-      if (!current.length) throw new NotFoundException('Critical result not found');
-      if (!current[0].isCurrent || current[0].status === 'SUPERSEDED') throw new BadRequestException('This critical result occurrence is no longer current');
-      if (current[0].status === 'ACKNOWLEDGED') throw new BadRequestException('Critical result is already acknowledged');
-
       await tx.$executeRaw(Prisma.sql`
-        INSERT INTO "CriticalNotificationAttempt"
-          ("criticalResultId", "labId", "method", "contactedName", "contactDetails", "successful", "readBackConfirmed", "notes", "attemptedById")
-        VALUES
-          (${id}::uuid, ${labId}::uuid, ${method}::"CriticalNotificationMethod", ${recipient}, ${contactDetails}, ${data.successful}, ${readBackConfirmed}, ${notes}, ${userId}::uuid)
+        INSERT INTO "CriticalNotificationAttempt" (
+          "id", "criticalResultId", "labId", "method", "attemptedAt", "contactedName",
+          "contactDetails", "successful", "readBackConfirmed", "notes", "attemptedById"
+        ) VALUES (
+          gen_random_uuid(), ${id}::uuid, ${labId}::uuid, ${data.method}::"CriticalNotificationMethod",
+          ${attemptedAt}, ${data.contactedName?.trim() || null}, ${data.contactDetails?.trim() || null},
+          ${data.successful}, ${data.readBackConfirmed ?? false}, ${data.notes?.trim() || null}, ${userId}::uuid
+        )
       `);
-
       if (data.successful) {
         await tx.$executeRaw(Prisma.sql`
           UPDATE "CriticalResult"
-          SET "status" = 'NOTIFIED', "notifiedAt" = CURRENT_TIMESTAMP,
-              "notifiedTo" = ${recipient}, "notifiedById" = ${userId}::uuid,
-              "updatedAt" = CURRENT_TIMESTAMP
+          SET "status" = 'NOTIFIED', "notifiedAt" = ${attemptedAt},
+              "notifiedTo" = ${data.contactedName?.trim() || null}, "updatedAt" = CURRENT_TIMESTAMP
           WHERE "id" = ${id}::uuid AND "labId" = ${labId}::uuid
+            AND "isCurrent" = true AND "status" = 'PENDING'
         `);
       }
-
       await tx.auditLog.create({
         data: {
           labId,
@@ -157,15 +153,13 @@ export class CriticalResultsService {
           entityId: id,
           metadata: {
             operation: 'CRITICAL_NOTIFICATION_ATTEMPT',
-            method,
+            method: data.method,
             successful: data.successful,
-            recipient,
-            readBackConfirmed,
+            contactedName: data.contactedName?.trim() || null,
           },
         },
       });
     });
-
     return this.getOne(labId, id);
   }
 }
