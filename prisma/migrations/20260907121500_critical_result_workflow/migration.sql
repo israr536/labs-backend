@@ -77,8 +77,8 @@ DECLARE
   next_occurrence INTEGER;
   new_id UUID;
 BEGIN
-  SELECT tp."criticalLow", tp."criticalHigh", tp."unit", oi."orderId", lo."labId", lo."patientId", oi."testId"
-    INTO critical_low, critical_high, unit_value, current_record.order_id, lab_id, patient_id, test_id
+  SELECT tp."criticalLow", tp."criticalHigh", tp."unit", lo."labId", lo."patientId", oi."testId"
+    INTO critical_low, critical_high, unit_value, lab_id, patient_id, test_id
   FROM "TestParameter" tp
   JOIN "OrderItem" oi ON oi.id = NEW."orderItemId"
   JOIN "LabOrder" lo ON lo.id = oi."orderId"
