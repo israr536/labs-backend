@@ -59,12 +59,28 @@ export class FinalReportWorkflowService {
     });
     if (!order) throw new NotFoundException('Order not found');
     if (order.status !== OrderStatus.FINAL) {
-      throw new BadRequestException('Only a final report can be amended');
+      throw new BadRequestException('Only a finalized report can start an amendment');
+    }
+
+    const existingPending = await this.prisma.auditLog.findFirst({
+      where: {
+        labId: currentUser.labId,
+        entity: 'FinalReport',
+        entityId: report.id,
+        action: AuditAction.AMEND,
+        createdAt: { gt: report.finalizedAt },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (existingPending?.metadata && typeof existingPending.metadata === 'object' && !Array.isArray(existingPending.metadata)) {
+      if ((existingPending.metadata as Record<string, unknown>).phase === 'STARTED') {
+        throw new ConflictException('An amendment is already in progress for this report');
+      }
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const locked = await tx.labOrder.updateMany({
-        where: { id: orderId, labId: currentUser.labId, status: OrderStatus.FINAL },
+        where: { id: order.id, labId: currentUser.labId, revision: order.revision, status: OrderStatus.FINAL },
         data: { status: OrderStatus.RESULT_ENTERED, revision: { increment: 1 } },
       });
       if (locked.count !== 1) {
@@ -175,23 +191,74 @@ export class FinalReportWorkflowService {
       reason: amendmentReason,
       phase: 'RELEASED',
     });
-
-    return {
-      reportId: report.id,
+    await this.audit.record(currentUser, AuditAction.FINALIZE, 'FinalReport', report.id, {
+      orderId,
       reportNumber: report.reportNumber,
       version: nextVersion,
-      status: OrderStatus.FINAL,
-      amendmentReason,
-      releasedAt,
-      message: 'Amended report released successfully.',
-    };
+      amended: true,
+    });
+
+    return this.reports.getReport(currentUser, orderId);
   }
 
   private async getOrder(currentUser: AuthUser, orderId: string) {
-    return this.reports.getOrder(currentUser, orderId);
+    const order = await this.prisma.labOrder.findFirst({
+      where: { id: orderId, labId: currentUser.labId },
+      include: {
+        patient: true,
+        samples: true,
+        items: {
+          include: {
+            test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } },
+            results: true,
+          },
+        },
+      },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    return order;
   }
 
-  private buildSnapshot(lab: any, order: any, releasedAt: Date) {
-    return this.reports.buildSnapshot(lab, order, releasedAt);
+  private buildSnapshot(lab: any, order: any, finalizedAt: Date) {
+    return {
+      lab,
+      order: {
+        id: order.id,
+        orderNumber: order.orderNumber,
+        status: OrderStatus.FINAL,
+        referredBy: order.referredBy,
+        clinicalNotes: order.clinicalNotes,
+        orderedAt: order.orderedAt,
+        patient: order.patient,
+        samples: order.samples,
+        tests: order.items.map((item: any) => ({
+          orderItemId: item.id,
+          test: {
+            id: item.test.id,
+            code: item.test.code,
+            name: item.test.name,
+            category: item.test.category,
+            department: item.test.department,
+            sampleType: item.test.sampleType,
+            method: item.test.method,
+          },
+          parameters: item.test.parameters.map((parameter: any) => {
+            const result = item.results.find((row: any) => row.parameterId === parameter.id);
+            return {
+              parameterId: parameter.id,
+              name: parameter.name,
+              value: result?.value ?? null,
+              unit: parameter.unit,
+              referenceRange: parameter.referenceRange,
+              normalMin: parameter.normalMin,
+              normalMax: parameter.normalMax,
+              flag: result?.flag ?? null,
+              displayOrder: parameter.displayOrder,
+            };
+          }),
+        })),
+      },
+      finalizedAt,
+    };
   }
 }
