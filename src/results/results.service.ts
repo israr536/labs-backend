@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { OrderStatus, ParameterInputType, Prisma, ResultFlag } from '@prisma/client';
+import { AuditAction, OrderStatus, ParameterInputType, Prisma, ResultFlag } from '@prisma/client';
+import { AuditService } from '../audit/audit.service';
 import { AuthUser } from '../auth/auth.types';
 import { arrayValue, requiredString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,7 +12,11 @@ type ValidationRules = { min?: number; max?: number; minLength?: number; maxLeng
 
 @Injectable()
 export class ResultsService {
-  constructor(private readonly prisma: PrismaService, private readonly referenceRanges: ReferenceRangesService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly referenceRanges: ReferenceRangesService,
+    private readonly audit: AuditService,
+  ) {}
 
   async save(currentUser: AuthUser, orderId: string, body: ResultsBody = {}) {
     const inputs = arrayValue<ResultInput>(body.results ?? [], 'results');
@@ -23,6 +28,8 @@ export class ResultsService {
     const items = order.items.flatMap((item) => item.test.parameters.map((parameter) => ({ item, parameter })));
     const byParameter = new Map(items.map(({ parameter, item }) => [parameter.id, { parameter, item }]));
     const seen = new Set<string>();
+    const changedParameterIds: string[] = [];
+    const createdParameterIds: string[] = [];
 
     const normalized = await Promise.all(inputs.map(async (input, index) => {
       const parameterId = requiredString(input.parameterId, `results.${index}.parameterId`);
@@ -31,6 +38,16 @@ export class ResultsService {
       seen.add(parameterId);
       const target = byParameter.get(parameterId);
       if (!target) throw new BadRequestException(`results.${index}.parameterId does not belong to this order`);
+
+      // Defense-in-depth: a verified result must never be overwritten, even if an
+      // inconsistent order status reaches this service through another code path.
+      const existing = target.item.results.find((row) => row.parameterId === parameterId);
+      if (existing?.verifiedAt) {
+        throw new BadRequestException(`Result for ${target.parameter.name} has already been verified and cannot be changed`);
+      }
+      if (existing) changedParameterIds.push(parameterId);
+      else createdParameterIds.push(parameterId);
+
       const value = this.validateValue(target.parameter, rawValue, index);
       const sampleId = input.sampleId === undefined ? undefined : requiredString(input.sampleId, `results.${index}.sampleId`);
       if (sampleId) {
@@ -83,6 +100,23 @@ export class ResultsService {
         `);
       }
       await tx.labOrder.update({ where: { id: order.id }, data: { status: OrderStatus.RESULT_ENTERED } });
+      await tx.auditLog.create({
+        data: {
+          labId: currentUser.labId,
+          actorId: currentUser.id,
+          action: AuditAction.UPDATE,
+          entity: 'LabOrderResults',
+          entityId: order.id,
+          metadata: {
+            operation: 'SAVE_RESULTS',
+            orderRevision: order.revision + 1,
+            createdCount: createdParameterIds.length,
+            updatedCount: changedParameterIds.length,
+            createdParameterIds,
+            updatedParameterIds: changedParameterIds,
+          },
+        },
+      });
     });
     return this.findOne(currentUser, orderId);
   }
@@ -101,7 +135,10 @@ export class ResultsService {
     for (const item of order.items) for (const parameter of item.test.parameters) {
       const result = item.results.find((row) => row.parameterId === parameter.id);
       if (parameter.isRequired && (!result || !result.value.trim())) missing.push(`${item.test.name}: ${parameter.name}`);
-      if (result) resultIds.push(result.id);
+      if (result) {
+        if (result.verifiedAt) throw new BadRequestException(`Result for ${parameter.name} has already been verified`);
+        resultIds.push(result.id);
+      }
     }
     if (missing.length) throw new BadRequestException(`Missing required results: ${missing.join(', ')}`);
     if (!resultIds.length) throw new BadRequestException('No results are available for verification');
@@ -110,7 +147,18 @@ export class ResultsService {
     await this.prisma.$transaction(async (tx) => {
       const locked = await tx.labOrder.updateMany({ where: { id: order.id, labId: currentUser.labId, revision: order.revision, status: OrderStatus.RESULT_ENTERED }, data: { status: OrderStatus.VERIFIED, revision: { increment: 1 } } });
       if (locked.count !== 1) throw new ConflictException('This order changed while you were verifying it. Reload and try again.');
-      await tx.orderResult.updateMany({ where: { id: { in: resultIds }, verifiedAt: null }, data: { verifiedAt, verifiedById: currentUser.id } });
+      const verified = await tx.orderResult.updateMany({ where: { id: { in: resultIds }, verifiedAt: null }, data: { verifiedAt, verifiedById: currentUser.id } });
+      if (verified.count !== resultIds.length) throw new ConflictException('One or more results changed while verification was in progress. Reload the order and try again.');
+      await tx.auditLog.create({
+        data: {
+          labId: currentUser.labId,
+          actorId: currentUser.id,
+          action: AuditAction.VERIFY,
+          entity: 'LabOrderResults',
+          entityId: order.id,
+          metadata: { operation: 'VERIFY_RESULTS', resultCount: resultIds.length, resultIds },
+        },
+      });
     });
     return this.findOne(currentUser, orderId);
   }
