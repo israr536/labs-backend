@@ -9,31 +9,21 @@ type NotificationMethod = (typeof METHODS)[number];
 export class CriticalResultsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * Critical thresholds are laboratory-configured values. This service never
-   * invents or seeds clinical alert limits.
-   */
+  /** Critical thresholds are laboratory-configured; this service never invents them. */
   async listPending(labId: string) {
-    const rows = await this.prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
+    return this.prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       SELECT
         cr."id", cr."orderResultId", cr."patientId", cr."testId", cr."parameterId",
         cr."occurrence", cr."value", cr."unit", cr."direction", cr."criticalThreshold",
         cr."referenceRangeSnapshot", cr."status", cr."detectedAt", cr."notifiedAt",
         cr."notifiedTo", cr."acknowledgedAt", cr."acknowledgementNote",
-        p."name" AS "patientName",
-        t."name" AS "testName",
-        tp."name" AS "parameterName",
+        p."name" AS "patientName", t."name" AS "testName", tp."name" AS "parameterName",
         COALESCE((
           SELECT json_agg(json_build_object(
-            'id', a."id",
-            'method', a."method",
-            'attemptedAt', a."attemptedAt",
-            'contactedName', a."contactedName",
-            'contactDetails', a."contactDetails",
-            'successful', a."successful",
-            'readBackConfirmed', a."readBackConfirmed",
-            'notes', a."notes",
-            'attemptedById', a."attemptedById'
+            'id', a."id", 'method', a."method", 'attemptedAt', a."attemptedAt",
+            'contactedName', a."contactedName", 'contactDetails', a."contactDetails",
+            'successful', a."successful", 'readBackConfirmed', a."readBackConfirmed",
+            'notes', a."notes", 'attemptedById', a."attemptedById"
           ) ORDER BY a."attemptedAt" DESC)
           FROM "CriticalNotificationAttempt" a
           WHERE a."criticalResultId" = cr."id" AND a."labId" = cr."labId"
@@ -47,13 +37,13 @@ export class CriticalResultsService {
         AND cr."status" IN ('PENDING', 'NOTIFIED')
       ORDER BY cr."detectedAt" ASC
       LIMIT 100
-    `;
-    return rows;
+    `);
   }
 
   async getOne(labId: string, id: string) {
     const rows = await this.prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
-      SELECT cr.*, p."name" AS "patientName", t."name" AS "testName", tp."name" AS "parameterName", tp."unit" AS "parameterUnit"
+      SELECT cr.*, p."name" AS "patientName", t."name" AS "testName",
+             tp."name" AS "parameterName", tp."unit" AS "parameterUnit"
       FROM "CriticalResult" cr
       JOIN "Patient" p ON p."id" = cr."patientId"
       JOIN "Test" t ON t."id" = cr."testId"
@@ -63,7 +53,8 @@ export class CriticalResultsService {
     `);
     if (!rows.length) throw new NotFoundException('Critical result not found');
     const attempts = await this.prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
-      SELECT "id", "method", "attemptedAt", "contactedName", "contactDetails", "successful", "readBackConfirmed", "notes", "attemptedById"
+      SELECT "id", "method", "attemptedAt", "contactedName", "contactDetails",
+             "successful", "readBackConfirmed", "notes", "attemptedById"
       FROM "CriticalNotificationAttempt"
       WHERE "criticalResultId" = ${id}::uuid AND "labId" = ${labId}::uuid
       ORDER BY "attemptedAt" DESC
@@ -78,12 +69,13 @@ export class CriticalResultsService {
       throw new BadRequestException('A critical result must have a successful notification before acknowledgement');
     }
     const noteValue = note?.trim() || null;
-    const updated = await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       const changed = await tx.$executeRaw(Prisma.sql`
         UPDATE "CriticalResult"
         SET "status" = 'ACKNOWLEDGED', "acknowledgedAt" = CURRENT_TIMESTAMP,
             "acknowledgedById" = ${userId}::uuid, "acknowledgementNote" = ${noteValue}, "updatedAt" = CURRENT_TIMESTAMP
-        WHERE "id" = ${id}::uuid AND "labId" = ${labId}::uuid AND "isCurrent" = true AND "status" = 'NOTIFIED'
+        WHERE "id" = ${id}::uuid AND "labId" = ${labId}::uuid
+          AND "isCurrent" = true AND "status" = 'NOTIFIED'
       `);
       if (changed !== 1) throw new BadRequestException('Critical result changed while acknowledgement was being recorded');
       await tx.auditLog.create({
@@ -96,9 +88,7 @@ export class CriticalResultsService {
           metadata: { operation: 'CRITICAL_RESULT_ACKNOWLEDGED', note: noteValue },
         },
       });
-      return changed;
     });
-    void updated;
     return this.getOne(labId, id);
   }
 
@@ -106,15 +96,24 @@ export class CriticalResultsService {
     labId: string,
     id: string,
     userId: string,
-    data: { method: string; successful: boolean; recipient?: string; contactDetails?: string; readBackConfirmed?: boolean; note?: string },
+    data: {
+      method: string;
+      successful: boolean;
+      recipient?: string;
+      contactDetails?: string;
+      readBackConfirmed?: boolean;
+      note?: string;
+    },
   ) {
     const method = data.method?.trim().toUpperCase() as NotificationMethod;
     if (!METHODS.includes(method)) throw new BadRequestException(`Unsupported notification method: ${data.method}`);
     if (typeof data.successful !== 'boolean') throw new BadRequestException('successful must be a boolean');
+
     const recipient = data.recipient?.trim() || null;
     const contactDetails = data.contactDetails?.trim() || null;
     const notes = data.note?.trim() || null;
     const readBackConfirmed = data.readBackConfirmed === true;
+
     if (data.successful && !recipient) throw new BadRequestException('Recipient name is required for a successful notification');
     if (data.successful && (method === 'PHONE' || method === 'ELECTRONIC') && !readBackConfirmed) {
       throw new BadRequestException('Read-back/receipt confirmation is required for successful phone or electronic notification');
@@ -123,21 +122,28 @@ export class CriticalResultsService {
     await this.getOne(labId, id);
     await this.prisma.$transaction(async (tx) => {
       const current = await tx.$queryRaw<Array<{ status: string; isCurrent: boolean }>>(Prisma.sql`
-        SELECT "status", "isCurrent" FROM "CriticalResult" WHERE "id" = ${id}::uuid AND "labId" = ${labId}::uuid FOR UPDATE
+        SELECT "status", "isCurrent"
+        FROM "CriticalResult"
+        WHERE "id" = ${id}::uuid AND "labId" = ${labId}::uuid
+        FOR UPDATE
       `);
       if (!current.length) throw new NotFoundException('Critical result not found');
       if (!current[0].isCurrent || current[0].status === 'SUPERSEDED') throw new BadRequestException('This critical result occurrence is no longer current');
       if (current[0].status === 'ACKNOWLEDGED') throw new BadRequestException('Critical result is already acknowledged');
 
       await tx.$executeRaw(Prisma.sql`
-        INSERT INTO "CriticalNotificationAttempt" ("criticalResultId", "labId", "method", "contactedName", "contactDetails", "successful", "readBackConfirmed", "notes", "attemptedById")
-        VALUES (${id}::uuid, ${labId}::uuid, ${method}::"CriticalNotificationMethod", ${recipient}, ${contactDetails}, ${data.successful}, ${readBackConfirmed}, ${notes}, ${userId}::uuid)
-      `;
+        INSERT INTO "CriticalNotificationAttempt"
+          ("criticalResultId", "labId", "method", "contactedName", "contactDetails", "successful", "readBackConfirmed", "notes", "attemptedById")
+        VALUES
+          (${id}::uuid, ${labId}::uuid, ${method}::"CriticalNotificationMethod", ${recipient}, ${contactDetails}, ${data.successful}, ${readBackConfirmed}, ${notes}, ${userId}::uuid)
+      `);
 
       if (data.successful) {
         await tx.$executeRaw(Prisma.sql`
           UPDATE "CriticalResult"
-          SET "status" = 'NOTIFIED', "notifiedAt" = CURRENT_TIMESTAMP, "notifiedTo" = ${recipient}, "notifiedById" = ${userId}::uuid, "updatedAt" = CURRENT_TIMESTAMP
+          SET "status" = 'NOTIFIED', "notifiedAt" = CURRENT_TIMESTAMP,
+              "notifiedTo" = ${recipient}, "notifiedById" = ${userId}::uuid,
+              "updatedAt" = CURRENT_TIMESTAMP
           WHERE "id" = ${id}::uuid AND "labId" = ${labId}::uuid
         `);
       }
