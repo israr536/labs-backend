@@ -1,13 +1,20 @@
 # Critical results
 
-Critical-result records are intentionally separate from ordinary result values. A critical event should be created only when the laboratory's configured critical interval says that the entered result is an alert value.
+Critical-result records are separate from ordinary LOW/NORMAL/HIGH result flags. An event is created only when a laboratory-configured `criticalLow` or `criticalHigh` threshold is crossed.
 
-Lifecycle:
+## Production lifecycle
 
-1. Result evaluation detects CRITICAL_LOW or CRITICAL_HIGH.
-2. A critical-result record is created/updated for the current result version.
-3. Staff can record each notification attempt, including method, recipient, timestamp, staff member, outcome and note.
-4. Successful communication can be acknowledged.
-5. Audit history remains the source of truth for who changed the clinical record.
+1. A result is saved to `OrderResult`.
+2. A PostgreSQL trigger evaluates the configured critical thresholds in the same transaction.
+3. A current `CriticalResult` occurrence is created with the value, direction, threshold and reference-range snapshot.
+4. Every notification attempt is stored in `CriticalNotificationAttempt`.
+5. Successful phone/electronic notification requires read-back/receipt confirmation.
+6. The critical event becomes `NOTIFIED`, then staff can explicitly acknowledge it.
+7. All notification and acknowledgement actions create audit records.
+8. If a result changes, the previous critical occurrence is retained as `SUPERSEDED` and a new occurrence is created when appropriate.
 
-Do not seed universal critical thresholds. Critical intervals are laboratory-, method-, population- and clinician-dependent and must be configured/validated by each laboratory.
+The queue is tenant-isolated by `labId`.
+
+## Important clinical rule
+
+Do not seed universal critical thresholds. Critical limits are laboratory-, method-, population- and clinician-dependent and must be configured and validated by each laboratory. WHO guidance calls for immediate notification of critical results, documented notification attempts, verifiable communication, and continued attempts when the requester cannot initially be reached. citeturn0search0turn0search3
