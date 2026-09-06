@@ -17,4 +17,4 @@ The queue is tenant-isolated by `labId`.
 
 ## Important clinical rule
 
-Do not seed universal critical thresholds. Critical limits are laboratory-, method-, population- and clinician-dependent and must be configured and validated by each laboratory. WHO guidance calls for immediate notification of critical results, documented notification attempts, verifiable communication, and continued attempts when the requester cannot initially be reached. citeturn0search0turn0search3
+Do not seed universal critical thresholds. Critical limits are laboratory-, method-, population- and clinician-dependent and must be configured and validated by each laboratory. WHO laboratory quality guidance calls for immediate notification of critical results, documented notification attempts, verifiable communication, and continued attempts when the requester cannot initially be reached.
