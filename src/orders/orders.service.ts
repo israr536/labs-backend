@@ -44,11 +44,7 @@ export class OrdersService {
   }
 
   async findOne(currentUser: AuthUser, id: string) {
-    // Older lab test records can contain only a subset of their catalog
-    // parameters. Before returning an order, synchronize missing parameters
-    // from the linked catalog definition. This is additive only: existing
-    // parameters and any previously entered results are never deleted/changed.
-    const items = await this.prisma.labOrderItem.findMany({
+    const items = await this.prisma.orderItem.findMany({
       where: { orderId: id, order: { labId: currentUser.labId } },
       select: { testId: true, test: { select: { id: true, code: true, catalogId: true, parameters: true } } },
     });
