@@ -281,14 +281,17 @@ export class FinalReportsService {
           },
           parameters: item.test.parameters.map((parameter: any) => {
             const result = item.results.find((row: any) => row.parameterId === parameter.id);
+            const historicalRange = result?.referenceRangeSnapshot ?? null;
             return {
               parameterId: parameter.id,
               name: parameter.name,
               value: result?.value ?? null,
-              unit: parameter.unit,
-              referenceRange: parameter.referenceRange,
-              normalMin: parameter.normalMin,
-              normalMax: parameter.normalMax,
+              unit: historicalRange?.unit ?? parameter.unit,
+              referenceRange: historicalRange ?? parameter.referenceRange,
+              referenceRangeId: result?.referenceRangeId ?? null,
+              referenceRangeVersion: historicalRange?.version ?? null,
+              normalMin: historicalRange?.low ?? parameter.normalMin,
+              normalMax: historicalRange?.high ?? parameter.normalMax,
               flag: result?.flag ?? null,
               displayOrder: parameter.displayOrder,
             };
