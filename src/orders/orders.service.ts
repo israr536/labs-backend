@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { OrderStatus, Prisma } from '@prisma/client';
+import { AuthUser } from '../auth/auth.types';
 import { optionalString, requiredString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionService } from '../labs/subscription.service';
