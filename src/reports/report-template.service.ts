@@ -18,8 +18,25 @@ export class ReportTemplateService {
   list() { return REPORT_TEMPLATES; }
   async generatePdf(data: ReportData, requested?: string): Promise<Buffer> {
     const template = this.normalize(requested);
-    try { return await generate({ content: this.generateHtml(data, template) }, { format: 'A4', printBackground: true, margin: { top: '8mm', right: '10mm', bottom: '12mm', left: '10mm' } }); }
-    catch { throw new ServiceUnavailableException('PDF generation is temporarily unavailable'); }
+    try {
+      return await generate(
+        { content: this.generateHtml(data, template) },
+        {
+          format: 'A4',
+          printBackground: true,
+          preferCSSPageSize: true,
+          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+          margin: { top: '8mm', right: '10mm', bottom: '12mm', left: '10mm' },
+        },
+      );
+    } catch (error) {
+      console.error('Report template PDF generation failed', {
+        template,
+        reportId: data?.report?.id,
+        error: error instanceof Error ? error.stack || error.message : error,
+      });
+      throw new ServiceUnavailableException('PDF generation is temporarily unavailable');
+    }
   }
   normalize(value?: string): ReportTemplateId { return REPORT_TEMPLATES.some((item) => item.id === value) ? value as ReportTemplateId : 'classic'; }
 
