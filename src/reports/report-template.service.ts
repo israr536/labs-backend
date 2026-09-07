@@ -9,7 +9,6 @@ export const REPORT_TEMPLATES = [
   { id: 'premium', name: 'Premium Branded', description: 'Premium letterhead-style report for branded laboratories.' },
   { id: 'minimal', name: 'Minimal One-Page', description: 'Simple, clean format for routine single-test reports.' },
 ] as const;
-
 export type ReportTemplateId = typeof REPORT_TEMPLATES[number]['id'];
 
 type ReportData = any;
@@ -17,41 +16,26 @@ type ReportData = any;
 @Injectable()
 export class ReportTemplateService {
   list() { return REPORT_TEMPLATES; }
-
   async generatePdf(data: ReportData, requested?: string): Promise<Buffer> {
     const template = this.normalize(requested);
-    try {
-      return await generate({ content: this.generateHtml(data, template) }, {
-        format: 'A4', printBackground: true,
-        margin: { top: '8mm', right: '10mm', bottom: '12mm', left: '10mm' },
-      });
-    } catch {
-      throw new ServiceUnavailableException('PDF generation is temporarily unavailable');
-    }
+    try { return await generate({ content: this.generateHtml(data, template) }, { format: 'A4', printBackground: true, margin: { top: '8mm', right: '10mm', bottom: '12mm', left: '10mm' } }); }
+    catch { throw new ServiceUnavailableException('PDF generation is temporarily unavailable'); }
   }
-
-  normalize(value?: string): ReportTemplateId {
-    return REPORT_TEMPLATES.some((item) => item.id === value) ? value as ReportTemplateId : 'classic';
-  }
+  normalize(value?: string): ReportTemplateId { return REPORT_TEMPLATES.some((item) => item.id === value) ? value as ReportTemplateId : 'classic'; }
 
   private generateHtml(data: ReportData, template: ReportTemplateId): string {
     const e = (v: unknown) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c] ?? c));
     const date = (v: unknown) => v ? new Date(String(v)).toLocaleString('en-IN') : '—';
     const reportNo = e(data.report.reportNumber);
     const barcode = code39Svg(data.report.reportNumber || data.report.id);
-    const patient = data.patient;
-    const lab = data.lab;
-    const rows = (data.results ?? []).map((r: any, i: number) => {
-      const flag = e(r.flag || '');
-      const cls = r.flag === 'HIGH' ? 'high' : r.flag === 'LOW' ? 'low' : 'normal';
-      return `<tr class="${i % 2 ? 'alt' : ''}"><td>${e(r.name)}</td><td class="result ${cls}">${e(r.value || 'N/A')}</td><td>${e(r.unit || '')}</td><td>${e(r.normalRange || '')}</td><td class="flag ${cls}">${flag}</td></tr>`;
-    }).join('');
+    const p = data.patient; const lab = data.lab;
+    const rows = (data.results ?? []).map((r: any, i: number) => { const flag = e(r.flag || ''); const cls = r.flag === 'HIGH' ? 'high' : r.flag === 'LOW' ? 'low' : 'normal'; return `<tr class="${i % 2 ? 'alt' : ''}"><td>${e(r.name)}</td><td class="result ${cls}">${e(r.value || 'N/A')}</td><td>${e(r.unit || '')}</td><td>${e(r.normalRange || '')}</td><td class="flag ${cls}">${flag}</td></tr>`; }).join('');
     const notes = data.report.remarks || data.report.doctorNotes ? `<section class="notes"><h3>Clinical Notes / Interpretation</h3>${data.report.remarks ? `<p><b>Remarks:</b> ${e(data.report.remarks)}</p>` : ''}${data.report.doctorNotes ? `<p><b>Doctor Notes:</b> ${e(data.report.doctorNotes)}</p>` : ''}</section>` : '';
     const header = `<header class="header"><div><div class="lab-name">${e(lab.name)}</div><div class="muted">${e(lab.address || '')}</div><div class="muted">${e(lab.mobile)}${lab.email ? ` · ${e(lab.email)}` : ''}</div></div><div class="barcode">${barcode}<small>${reportNo}</small></div></header>`;
-    const patientBlock = `<section class="patient"><div><b>Patient</b><span>${e(patient.name)}</span></div><div><b>Age / Gender</b><span>${e(patient.age ?? 'N/A')} / ${e(patient.gender)}</span></div><div><b>Report No.</b><span>${reportNo}</span></div><div><b>Mobile</b><span>${e(patient.mobile || 'N/A')}</span></div><div><b>Referred By</b><span>${e(data.report.referredBy || 'N/A')}</span></div><div><b>Collected</b><span>${e(date(data.report.sampleCollectedAt))}</span></div><div><b>Reported</b><span>${e(date(data.report.reportedAt))}</span></div><div><b>Status</b><span>${e(data.report.status)}</span></div></section>`;
+    const patient = `<section class="patient"><div><b>Patient</b><span>${e(p.name)}</span></div><div><b>Age / Gender</b><span>${e(p.age ?? 'N/A')} / ${e(p.gender)}</span></div><div><b>Report No.</b><span>${reportNo}</span></div><div><b>Mobile</b><span>${e(p.mobile || 'N/A')}</span></div><div><b>Referred By</b><span>${e(data.report.referredBy || 'N/A')}</span></div><div><b>Collected</b><span>${e(date(data.report.sampleCollectedAt))}</span></div><div><b>Reported</b><span>${e(date(data.report.reportedAt))}</span></div><div><b>Status</b><span>${e(data.report.status)}</span></div></section>`;
     const table = `<section><div class="test-title"><span>Laboratory Test</span><strong>${e(data.test.name)}</strong><small>${e(data.test.category || '')}</small></div><table><thead><tr><th>Parameter</th><th>Result</th><th>Unit</th><th>Reference Range</th><th>Flag</th></tr></thead><tbody>${rows}</tbody></table></section>`;
     const signatures = `<footer class="signatures"><div><span></span>Authorized Signatory</div><div><span></span>Pathologist / Consultant</div></footer><div class="footer">Report ${reportNo} · Generated ${e(date(new Date()))} · ${e(lab.name)}</div>`;
-    return `<!doctype html><html><head><meta charset="utf-8"><style>${this.css(template)}</style></head><body class="${template}">${header}${patientBlock}${table}${notes}${signatures}</body></html>`;
+    return `<!doctype html><html><head><meta charset="utf-8"><style>${this.css(template)}</style></head><body class="${template}">${header}${patient}${table}${notes}${signatures}</body></html>`;
   }
 
   private css(t: ReportTemplateId) {
@@ -61,19 +45,8 @@ export class ReportTemplateService {
   }
 }
 
-// Code 39 barcode: no native package is required, so PDF generation remains deploy-safe.
 const CODE39: Record<string,string> = {
-  '0':'101001101101','1':'110100101011','2':'101100101011','3':'110110010101','4':'101001101011','5':'110100110101','6':'101100110101','7':'101001011011','8':'110100101101','9':'101100101101',
-  'A':'110101001011','B':'101101001011','C':'110110100101','D':'101011001011','E':'110101100101','F':'101101100101','G':'101010011011','H':'110101001101','I':'101101001101','J':'101011001101',
-  'K':'110101010011','L':'101101010011','M':'110110101001','N':'101011010011','O':'110101101001','P':'101101101001','Q':'101010110011','R':'110101011001','S':'101101011001','T':'101011011001',
-  'U':'110010101011','V':'100110101011','W':'110011010101','X':'100101101011','Y':'110010110101','Z':'100110110101','-':'100101011011','.':'110010101101',' ':'100110101101,'$':'100100100101','/':'100100101001','+':'100101001001','%':'101001001001','*':'100101101101'
+  '0':'101001101101','1':'110100101011','2':'101100101011','3':'110110010101','4':'101001101011','5':'110100110101','6':'101100110101','7':'101001011011','8':'110100101101','9':'101100101101','A':'110101001011','B':'101101001011','C':'110110100101','D':'101011001011','E':'110101100101','F':'101101100101','G':'101010011011','H':'110101001101','I':'101101001101','J':'101011001101','K':'110101010011','L':'101101010011','M':'110110101001','N':'101011010011','O':'110101101001','P':'101101101001','Q':'101010110011','R':'110101011001','S':'101101011001','T':'101011011001','U':'110010101011','V':'100110101011','W':'110011010101','X':'100101101011','Y':'110010110101','Z':'100110110101','-':'100101011011','.':'110010101101',' ':'100110101101','$':'100100100101','/':'100100101001','+':'100101001001','%':'101001001001','*':'100101101101'
 };
-function code39Svg(raw: string): string {
-  const value = String(raw || 'REPORT').toUpperCase().replace(/[^0-9A-Z. $/+%-]/g, '-').slice(0, 32);
-  const encoded = `*${value}*`;
-  let x = 0; const bars: string[] = []; const unit = 1.5;
-  for (const ch of encoded) { const pattern = CODE39[ch] || CODE39['-']; for (let i=0;i<pattern.length;i++) if (pattern[i] === '1') bars.push(`<rect x="${x.toFixed(2)}" y="0" width="${unit.toFixed(2)}" height="30"/>`); x += unit; }
-  const width = x + 8;
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 38" preserveAspectRatio="none"><g fill="#111">${bars.join('')}</g><text x="${width/2}" y="37" text-anchor="middle" font-family="Arial" font-size="5">${escapeXml(value)}</text></svg>`;
-}
-function escapeXml(value: string) { return value.replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c] ?? c)); }
+function code39Svg(raw: string): string { const value = String(raw || 'REPORT').toUpperCase().replace(/[^0-9A-Z. $/+%-]/g, '-').slice(0,32); const encoded=`*${value}*`; let x=0; const bars:string[]=[]; const unit=1.5; for(const ch of encoded){const pattern=CODE39[ch]||CODE39['-']; for(let i=0;i<pattern.length;i++) if(pattern[i]==='1') bars.push(`<rect x="${x.toFixed(2)}" y="0" width="${unit.toFixed(2)}" height="30"/>`); x+=unit;} const width=x+8; return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 38" preserveAspectRatio="none"><g fill="#111">${bars.join('')}</g><text x="${width/2}" y="37" text-anchor="middle" font-family="Arial" font-size="5">${escapeXml(value)}</text></svg>`; }
+function escapeXml(value:string){return value.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]??c));}
