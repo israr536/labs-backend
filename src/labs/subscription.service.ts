@@ -3,7 +3,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export const SUBSCRIPTION_PLANS = {
-  TRIAL: { name: 'Trial', maxUsers: 3, maxPatients: 100, maxTests: 50, maxOrders: 250 },
+  // Trial labs have full access to the master test catalog during the trial.
+  TRIAL: { name: 'Trial', maxUsers: 3, maxPatients: 100, maxTests: null, maxOrders: 250 },
   FREE: { name: 'Free', maxUsers: 2, maxPatients: 100, maxTests: 25, maxOrders: 100 },
   STARTER: { name: 'Starter', maxUsers: 5, maxPatients: 5000, maxTests: 500, maxOrders: 10000 },
   PROFESSIONAL: { name: 'Professional', maxUsers: 15, maxPatients: 25000, maxTests: 2000, maxOrders: 50000 },
