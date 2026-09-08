@@ -39,8 +39,6 @@ export class ResultsService {
       const target = byParameter.get(parameterId);
       if (!target) throw new BadRequestException(`results.${index}.parameterId does not belong to this order`);
 
-      // Defense-in-depth: a verified result must never be overwritten, even if an
-      // inconsistent order status reaches this service through another code path.
       const existing = target.item.results.find((row) => row.parameterId === parameterId);
       if (existing?.verifiedAt) {
         throw new BadRequestException(`Result for ${target.parameter.name} has already been verified and cannot be changed`);
@@ -94,9 +92,9 @@ export class ResultsService {
         });
         await tx.$executeRaw(Prisma.sql`
           UPDATE "OrderResult"
-          SET "referenceRangeId" = ${result.referenceRangeId}::uuid,
+          SET "referenceRangeId" = ${result.referenceRangeId},
               "referenceRangeSnapshot" = ${result.referenceRangeSnapshot ? JSON.stringify(result.referenceRangeSnapshot) : null}::jsonb
-          WHERE "orderItemId" = ${result.orderItemId}::uuid AND "parameterId" = ${result.parameterId}::uuid
+          WHERE "orderItemId" = ${result.orderItemId} AND "parameterId" = ${result.parameterId}
         `);
       }
       await tx.labOrder.update({ where: { id: order.id }, data: { status: OrderStatus.RESULT_ENTERED } });
@@ -168,7 +166,7 @@ export class ResultsService {
     const rows = await this.prisma.$queryRaw<Array<{ id: string; referenceRangeSnapshot: unknown }>>(Prisma.sql`
       SELECT "id", "referenceRangeSnapshot"
       FROM "OrderResult"
-      WHERE "id" IN (${Prisma.join(resultIds.map((id) => Prisma.sql`${id}::uuid`))})
+      WHERE "id" IN (${Prisma.join(resultIds.map((id) => Prisma.sql`${id}`))})
     `);
     return new Map(rows.map((row) => [row.id, row.referenceRangeSnapshot]));
   }
