@@ -42,7 +42,7 @@ export class ReferenceRangesService {
       SELECT "id", "version", "gender", "ageMinYears"::double precision, "ageMaxYears"::double precision,
              "method", "analyzer", "low", "high", "displayRange", "unit", "effectiveFrom", "effectiveTo"
       FROM "TestParameterReferenceRange"
-      WHERE "parameterId" = ${parameterId}::uuid
+      WHERE "parameterId" = ${parameterId}
       ORDER BY "version" DESC
     `);
   }
@@ -68,7 +68,7 @@ export class ReferenceRangesService {
       const existing = await tx.$queryRaw<Array<{ version: number; effectiveFrom: Date }>>(Prisma.sql`
         SELECT "version", "effectiveFrom"
         FROM "TestParameterReferenceRange"
-        WHERE "parameterId" = ${parameterId}::uuid
+        WHERE "parameterId" = ${parameterId}
         ORDER BY "version" DESC
         LIMIT 1
       `);
@@ -80,7 +80,7 @@ export class ReferenceRangesService {
       const overlaps = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
         SELECT "id"
         FROM "TestParameterReferenceRange"
-        WHERE "parameterId" = ${parameterId}::uuid
+        WHERE "parameterId" = ${parameterId}
           AND "effectiveFrom" <= ${effectiveFrom}
           AND ("effectiveTo" IS NULL OR "effectiveTo" > ${effectiveFrom})
           AND ("gender" IS NULL OR ${gender}::"Gender" IS NULL OR "gender" = ${gender}::"Gender")
@@ -95,7 +95,7 @@ export class ReferenceRangesService {
         await tx.$executeRaw(Prisma.sql`
           UPDATE "TestParameterReferenceRange"
           SET "effectiveTo" = ${effectiveFrom}
-          WHERE "id" = ${overlaps[0].id}::uuid
+          WHERE "id" = ${overlaps[0].id}
         `);
       }
 
@@ -103,7 +103,7 @@ export class ReferenceRangesService {
         INSERT INTO "TestParameterReferenceRange"
           ("parameterId", "version", "gender", "ageMinYears", "ageMaxYears", "method", "analyzer", "low", "high", "displayRange", "unit", "effectiveFrom")
         VALUES
-          (${parameterId}::uuid, ${version}, ${gender}::"Gender", ${ageMinYears}, ${ageMaxYears}, ${method}, ${analyzer}, ${low}, ${high}, ${displayRange}, ${unit}, ${effectiveFrom})
+          (${parameterId}, ${version}, ${gender}::"Gender", ${ageMinYears}, ${ageMaxYears}, ${method}, ${analyzer}, ${low}, ${high}, ${displayRange}, ${unit}, ${effectiveFrom})
         RETURNING "id", "version", "gender", "ageMinYears"::double precision, "ageMaxYears"::double precision,
                   "method", "analyzer", "low", "high", "displayRange", "unit", "effectiveFrom", "effectiveTo"
       `);
@@ -118,7 +118,7 @@ export class ReferenceRangesService {
       SELECT "id", "version", "gender", "ageMinYears"::double precision, "ageMaxYears"::double precision,
              "method", "analyzer", "low", "high", "displayRange", "unit", "effectiveFrom", "effectiveTo"
       FROM "TestParameterReferenceRange"
-      WHERE "parameterId" = ${parameterId}::uuid
+      WHERE "parameterId" = ${parameterId}
         AND "effectiveFrom" <= ${at}
         AND ("effectiveTo" IS NULL OR "effectiveTo" > ${at})
         AND ("gender" IS NULL OR "gender" = ${patient.gender}::"Gender")
@@ -143,7 +143,7 @@ export class ReferenceRangesService {
       SELECT p."id"
       FROM "TestParameter" p
       JOIN "Test" t ON t."id" = p."testId"
-      WHERE p."id" = ${parameterId}::uuid AND t."labId" = ${currentUser.labId}::uuid
+      WHERE p."id" = ${parameterId} AND t."labId" = ${currentUser.labId}
       LIMIT 1
     `);
     if (!rows.length) throw new NotFoundException('Test parameter not found');
