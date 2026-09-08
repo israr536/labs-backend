@@ -1,20 +1,10 @@
 -- Backfill existing lab-specific Test rows from their TestDefinition catalog.
--- Existing TestParameter rows are preserved so existing ReportResult/OrderResult
--- foreign keys remain valid. Only missing parameters are inserted.
-
-BEGIN;
-
--- Some older lab tests may have been created without catalogId. Restore the
--- catalog link from the stable test code where possible.
-UPDATE "Test" AS t
-SET "catalogId" = td."id"
-FROM "TestDefinition" AS td
-WHERE t."catalogId" IS NULL
-  AND lower(trim(t."code")) = lower(trim(td."code"));
+-- Keep this migration compatible with the original Test table, which did not
+-- contain a stable code column. Existing tests without catalogId are preserved.
 
 -- Copy every missing catalog parameter into the lab-specific test.
--- ON CONFLICT is intentionally target-less so this remains safe against any
--- unique constraint on TestParameter while preserving already-used rows.
+-- Existing TestParameter rows are preserved so existing OrderResult/ReportResult
+-- foreign keys remain valid.
 INSERT INTO "TestParameter" (
   "id",
   "testId",
@@ -68,5 +58,3 @@ LEFT JOIN "TestParameter" AS existing
  AND lower(trim(existing."name")) = lower(trim(dp."name"))
 WHERE existing."id" IS NULL
 ON CONFLICT DO NOTHING;
-
-COMMIT;
