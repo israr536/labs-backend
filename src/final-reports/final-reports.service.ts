@@ -3,15 +3,17 @@ import {
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
+  Logger,
 } from '@nestjs/common';
 import { AuditAction, OrderStatus, SampleStatus } from '@prisma/client';
-import { generate } from 'html-pdf-node';
+import * as htmlPdfNode from 'html-pdf-node';
 import { AuthUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class FinalReportsService {
+  private readonly logger = new Logger(FinalReportsService.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -201,7 +203,7 @@ export class FinalReportsService {
   async generatePdf(currentUser: AuthUser, orderId: string): Promise<Buffer> {
     const data = await this.getReport(currentUser, orderId);
     try {
-      return await generate(
+      return await htmlPdfNode.generatePdf(
         { content: this.toHtml(data) },
         {
           format: 'A4',
@@ -210,7 +212,8 @@ export class FinalReportsService {
           preferCSSPageSize: true,
         },
       );
-    } catch {
+    } catch (error) {
+      this.logger.error('PDF generation failed', (error as Error)?.stack ?? String(error));
       throw new ServiceUnavailableException('PDF generation is temporarily unavailable');
     }
   }

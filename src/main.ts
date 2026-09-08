@@ -34,7 +34,9 @@ async function bootstrap() {
   });
 
   express.use?.(requestContextMiddleware());
-  express.use?.(rateLimitMiddleware({ windowMs: 60_000, max: 120 }));
+  if (isProduction) {
+    express.use?.(rateLimitMiddleware({ windowMs: 60_000, max: 120 }));
+  }
 
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidUnknownValues: false, transform: true }),

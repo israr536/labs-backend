@@ -1,5 +1,5 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
-import { generate } from 'html-pdf-node';
+import * as htmlPdfNode from 'html-pdf-node';
 
 interface ReportData {
   report: { id: string; reportNumber: string; status: string; remarks?: string | null; doctorNotes?: string | null; referredBy?: string | null; sampleCollectedAt?: Date | null; reportedAt?: Date | null; createdAt: Date };
@@ -13,7 +13,7 @@ interface ReportData {
 export class PdfService {
   async generateReportPdf(data: ReportData): Promise<Buffer> {
     try {
-      return await generate({ content: this.generateReportHtml(data) }, {
+      return await htmlPdfNode.generatePdf({ content: this.generateReportHtml(data) }, {
         format: 'A4',
         printBackground: true,
         margin: { top: '12mm', right: '12mm', bottom: '14mm', left: '12mm' },
