@@ -1,10 +1,7 @@
 -- Backfill existing lab-specific Test rows from their TestDefinition catalog.
--- Keep this migration compatible with the original Test table, which did not
--- contain a stable code column. Existing tests without catalogId are preserved.
+-- This migration intentionally uses only TestParameter columns that existed
+-- before the catalog migration chain, keeping fresh-database migration safe.
 
--- Copy every missing catalog parameter into the lab-specific test.
--- Existing TestParameter rows are preserved so existing OrderResult/ReportResult
--- foreign keys remain valid.
 INSERT INTO "TestParameter" (
   "id",
   "testId",
@@ -13,17 +10,8 @@ INSERT INTO "TestParameter" (
   "unit",
   "normalMin",
   "normalMax",
-  "referenceRange",
-  "options",
-  "validation",
-  "criticalLow",
-  "criticalHigh",
-  "decimalPlaces",
-  "defaultValue",
-  "formula",
   "displayOrder",
   "isRequired",
-  "remarks",
   "createdAt",
   "updatedAt"
 )
@@ -35,17 +23,8 @@ SELECT
   dp."unit",
   dp."normalMin",
   dp."normalMax",
-  dp."referenceRange",
-  dp."options",
-  dp."validation",
-  dp."criticalLow",
-  dp."criticalHigh",
-  dp."decimalPlaces",
-  dp."defaultValue",
-  dp."formula",
   dp."displayOrder",
   dp."isRequired",
-  dp."remarks",
   CURRENT_TIMESTAMP,
   CURRENT_TIMESTAMP
 FROM "Test" AS t
