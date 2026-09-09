@@ -1,24 +1,23 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import bcrypt from 'bcrypt';
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
-import { UserRole } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 
-jest.setTimeout(120_000);
+jest.setTimeout(180_000);
 
-describe('Reporting flow (e2e)', () => {
+describe('Authentication and reporting flow (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
-  let accessToken = '';
   let labId = '';
   let patientId = '';
   let orderId = '';
   let testIds: string[] = [];
-  let rawPassword = '';
   let email = '';
+  let password = '';
+  let accessToken = '';
+  let refreshAgent: ReturnType<typeof request.agent>;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -27,35 +26,67 @@ describe('Reporting flow (e2e)', () => {
     prisma = app.get(PrismaService);
 
     const unique = randomUUID();
-    rawPassword = randomUUID();
     email = `e2e-${unique}@example.invalid`;
+    password = `Test-${unique}-Pass!`;
     const mobile = `9${String(Date.now()).slice(-9)}`;
-    const now = new Date();
+    refreshAgent = request.agent(app.getHttpServer());
 
-    const lab = await prisma.lab.create({
-      data: {
-        code: `E2E-${unique.slice(0, 8).toUpperCase()}`,
-        name: 'E2E Laboratory',
+    // Full public signup: request OTP -> verify OTP -> lab/admin creation.
+    const signupRequest = await request(app.getHttpServer())
+      .post('/auth/signup/request-otp')
+      .send({
+        name: 'E2E Diagnostic Laboratory',
         mobile,
-        email,
-        subscriptionPlan: 'TRIAL',
-        subscriptionStartAt: now,
-        subscriptionEndAt: new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),
-      },
-    });
-    labId = lab.id;
+        email: `lab-${unique}@example.invalid`,
+        admin: { email, mobile, password },
+      })
+      .expect(201);
 
-    await prisma.user.create({
-      data: {
-        labId,
-        username: email,
-        email,
-        mobile,
-        password: await bcrypt.hash(rawPassword, 10),
-        role: UserRole.ADMIN,
-      },
-    });
+    expect(signupRequest.body.requestId).toBeTruthy();
+    expect(signupRequest.body.expiresAt).toBeTruthy();
+    expect(signupRequest.body.delivery).toBe('development');
+    expect(signupRequest.body.devOtp).toMatch(/^\d{6}$/);
 
+    const signupComplete = await request(app.getHttpServer())
+      .post('/auth/signup/verify-otp')
+      .send({ requestId: signupRequest.body.requestId, otp: signupRequest.body.devOtp })
+      .expect(201);
+
+    expect(signupComplete.body.success).toBe(true);
+    expect(signupComplete.body.lab.id).toBeTruthy();
+    expect(signupComplete.body.user.email).toBe(email);
+    expect(signupComplete.body.user.password).toBeUndefined();
+    expect(signupComplete.body.message).toContain('Signup completed');
+    labId = signupComplete.body.lab.id;
+
+    // Full sign-in and authenticated identity check.
+    const login = await refreshAgent
+      .post('/auth/login')
+      .send({ email, password })
+      .expect(201);
+    expect(login.body.accessToken).toBeTruthy();
+    expect(login.body.refreshToken).toBeUndefined();
+    expect(login.body.user.email).toBe(email);
+    expect(login.body.user.password).toBeUndefined();
+    accessToken = login.body.accessToken;
+
+    const me = await refreshAgent
+      .get('/auth/me')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(200);
+    expect(me.body.user.id).toBe(login.body.user.id);
+    expect(me.body.lab.id).toBe(labId);
+
+    // Refresh must work through the httpOnly cookie issued by login.
+    const refreshed = await refreshAgent
+      .post('/auth/refresh')
+      .expect(201);
+    expect(refreshed.body.accessToken).toBeTruthy();
+    expect(refreshed.body.refreshToken).toBeUndefined();
+    accessToken = refreshed.body.accessToken;
+
+    // Create two tests inside the newly signed-up lab so the rest of the flow
+    // validates a real multi-test report for a brand-new customer account.
     const parameterData = [
       { name: 'Result', inputType: 'NUMBER' as const, unit: 'mg/dL', normalMin: 1, normalMax: 100, displayOrder: 0, isRequired: true },
       { name: 'Comment', inputType: 'TEXT' as const, unit: null, normalMin: null, normalMax: null, displayOrder: 1, isRequired: true },
@@ -71,7 +102,6 @@ describe('Reporting flow (e2e)', () => {
         isActive: true,
         parameters: { create: parameterData },
       },
-      include: { parameters: true },
     });
     const secondTest = await prisma.test.create({
       data: {
@@ -84,15 +114,8 @@ describe('Reporting flow (e2e)', () => {
         isActive: true,
         parameters: { create: parameterData },
       },
-      include: { parameters: true },
     });
     testIds = [firstTest.id, secondTest.id];
-
-    const login = await request(app.getHttpServer())
-      .post('/auth/login')
-      .send({ email, password: rawPassword })
-      .expect(201);
-    accessToken = login.body.accessToken;
   });
 
   afterAll(async () => {
@@ -100,7 +123,14 @@ describe('Reporting flow (e2e)', () => {
     await app?.close();
   });
 
-  it('runs patient registration through multi-test final report and PDF printing', async () => {
+  it('rejects invalid sign-in credentials', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email, password: 'definitely-wrong-password' })
+      .expect(401);
+  });
+
+  it('runs patient registration through multi-test final report, PDF download and print response', async () => {
     const auth = { Authorization: `Bearer ${accessToken}` };
 
     const patient = await request(app.getHttpServer())
@@ -124,6 +154,7 @@ describe('Reporting flow (e2e)', () => {
       .send({})
       .expect(201);
     expect(Array.isArray(samples.body)).toBe(true);
+    expect(samples.body.length).toBeGreaterThanOrEqual(1);
     for (const sample of samples.body) {
       for (const status of ['COLLECTED', 'RECEIVED', 'PROCESSING', 'COMPLETED']) {
         await request(app.getHttpServer())
@@ -134,11 +165,15 @@ describe('Reporting flow (e2e)', () => {
       }
     }
 
-    const testDetails = await Promise.all(testIds.map((id) => request(app.getHttpServer()).get(`/tests/${id}`).set(auth).expect(200)));
-    const results = testDetails.flatMap((response) => response.body.parameters.map((parameter: any) => ({
-      parameterId: parameter.id,
-      value: parameter.inputType === 'NUMBER' ? '50' : 'E2E OK',
-    })));
+    const testDetails = await Promise.all(
+      testIds.map((id) => request(app.getHttpServer()).get(`/tests/${id}`).set(auth).expect(200)),
+    );
+    const results = testDetails.flatMap((response) =>
+      response.body.parameters.map((parameter: { id: string; inputType: string }) => ({
+        parameterId: parameter.id,
+        value: parameter.inputType === 'NUMBER' ? '50' : 'E2E OK',
+      })),
+    );
     expect(results).toHaveLength(4);
 
     await request(app.getHttpServer())
@@ -147,21 +182,50 @@ describe('Reporting flow (e2e)', () => {
       .send({ results })
       .expect(200);
 
-    const entered = await request(app.getHttpServer()).get(`/orders/${orderId}/results`).set(auth).expect(200);
+    const entered = await request(app.getHttpServer())
+      .get(`/orders/${orderId}/results`)
+      .set(auth)
+      .expect(200);
     expect(entered.body.items).toHaveLength(2);
-    expect(entered.body.items.every((item: any) => item.results.length === 2)).toBe(true);
+    expect(entered.body.items.every((item: { results: unknown[] }) => item.results.length === 2)).toBe(true);
 
     await request(app.getHttpServer()).post(`/orders/${orderId}/verify`).set(auth).expect(201);
     await request(app.getHttpServer()).post(`/orders/${orderId}/finalize`).set(auth).expect(201);
 
-    const report = await request(app.getHttpServer()).get(`/orders/${orderId}/report`).set(auth).expect(200);
+    const report = await request(app.getHttpServer())
+      .get(`/orders/${orderId}/report`)
+      .set(auth)
+      .expect(200);
     expect(report.body.order.id).toBe(orderId);
     expect(report.body.order.tests).toHaveLength(2);
-    expect(report.body.order.tests.every((item: any) => item.parameters.length === 2)).toBe(true);
+    expect(report.body.order.tests.every((item: { parameters: unknown[] }) => item.parameters.length === 2)).toBe(true);
+    expect(report.body.reportNumber).toBeTruthy();
 
-    const pdf = await request(app.getHttpServer()).get(`/orders/${orderId}/report/pdf`).set(auth).expect(200);
+    // The PDF endpoint is the same endpoint used for browser download/printing.
+    const pdf = await request(app.getHttpServer())
+      .get(`/orders/${orderId}/report/pdf`)
+      .set(auth)
+      .buffer(true)
+      .parse((response, callback) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+        response.on('end', () => callback(null, Buffer.concat(chunks)));
+      })
+      .expect(200);
+
+    const pdfBuffer = pdf.body as Buffer;
     expect(pdf.headers['content-type']).toContain('application/pdf');
-    expect(pdf.body.length).toBeGreaterThan(100);
-    expect(pdf.body.subarray(0, 4).toString()).toBe('%PDF');
+    expect(pdf.headers['content-disposition']).toContain('inline');
+    expect(pdf.headers['cache-control']).toContain('no-store');
+    expect(pdfBuffer.length).toBeGreaterThan(1000);
+    expect(pdfBuffer.subarray(0, 5).toString()).toBe('%PDF-');
+    expect(pdfBuffer.subarray(-5).toString()).toContain('%%EOF');
+    expect(pdfBuffer.toString('latin1')).toContain('/Type /Page');
+  });
+
+  it('logs out the refresh-token session and prevents reuse', async () => {
+    await refreshAgent.post('/auth/logout').expect(200).expect({ success: true });
+
+    await refreshAgent.post('/auth/refresh').expect(400);
   });
 });
