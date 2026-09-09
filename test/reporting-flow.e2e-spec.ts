@@ -31,9 +31,7 @@ describe('Authentication and reporting flow (e2e)', () => {
     const mobile = `9${String(Date.now()).slice(-9)}`;
     refreshAgent = request.agent(app.getHttpServer());
 
-    const signupRequest = await request(app.getHttpServer()).post('/auth/signup/request-otp').send({
-      name: 'E2E Diagnostic Laboratory', mobile, email: `lab-${unique}@example.invalid`, admin: { email, mobile, password },
-    }).expect(201);
+    const signupRequest = await request(app.getHttpServer()).post('/auth/signup/request-otp').send({ name: 'E2E Diagnostic Laboratory', mobile, email: `lab-${unique}@example.invalid`, admin: { email, mobile, password } }).expect(201);
     expect(signupRequest.body.requestId).toBeTruthy();
     expect(signupRequest.body.expiresAt).toBeTruthy();
     expect(signupRequest.body.delivery).toBe('development');
@@ -68,7 +66,7 @@ describe('Authentication and reporting flow (e2e)', () => {
       { name: 'Comment', inputType: 'TEXT' as const, unit: null, normalMin: null, normalMax: null, displayOrder: 1, isRequired: true },
     ];
     const firstTest = await prisma.test.create({ data: { labId, code: `E2E-A-${unique.slice(0, 8)}`, name: 'E2E Chemistry Test', category: 'E2E', department: 'CHEMISTRY', sampleType: 'SERUM', isActive: true, parameters: { create: parameterData } } });
-    const secondTest = await prisma.test.create({ data: { labId, code: `E2E-B-${unique.slice(0, 8)}`, name: 'E2E Hematology Test', category: 'E2E', department: 'HEMATOLOGY', sampleType: 'BLOOD', isActive: true, parameters: { create: parameterData } });
+    const secondTest = await prisma.test.create({ data: { labId, code: `E2E-B-${unique.slice(0, 8)}`, name: 'E2E Hematology Test', category: 'E2E', department: 'HEMATOLOGY', sampleType: 'BLOOD', isActive: true, parameters: { create: parameterData } } });
     testIds = [firstTest.id, secondTest.id];
   });
 
