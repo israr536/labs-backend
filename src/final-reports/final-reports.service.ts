@@ -208,13 +208,19 @@ export class FinalReportsService {
     });
     if (!report) throw new NotFoundException('Final report not found');
 
+    // The snapshot is intentionally persisted as JSON so a finalized report remains
+    // immutable even when the underlying patient/test catalog changes. Cast the
+    // snapshot at this boundary so consumers such as PDF generation can use the
+    // persisted snapshot shape without pretending Prisma's JsonValue has a static
+    // domain-specific structure.
+    const snapshot = report.snapshot as any;
     return {
       id: report.id,
       reportNumber: report.reportNumber,
       version: report.currentVersion,
       finalizedAt: report.finalizedAt,
       finalizedBy: report.finalizedBy,
-      ...(report.snapshot as object),
+      ...snapshot,
     };
   }
 
