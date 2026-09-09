@@ -204,10 +204,11 @@ describe('Authentication and reporting flow (e2e)', () => {
         const chunks: Buffer[] = [];
         response.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
         response.on('end', () => callback(null, Buffer.concat(chunks)));
+        response.on('error', callback);
       })
       .expect(200);
 
-    const pdfBuffer = pdf.body as Buffer;
+    const pdfBuffer = Buffer.isBuffer(pdf.body) ? pdf.body : Buffer.from(pdf.body);
     expect(pdf.headers['content-type']).toContain('application/pdf');
     expect(pdf.headers['content-disposition']).toContain('inline');
     expect(pdf.headers['cache-control']).toContain('no-store');
