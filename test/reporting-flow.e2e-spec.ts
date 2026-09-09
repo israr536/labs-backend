@@ -31,14 +31,11 @@ describe('Authentication and reporting flow (e2e)', () => {
     const mobile = `9${String(Date.now()).slice(-9)}`;
     refreshAgent = request.agent(app.getHttpServer());
 
-    const signupRequest = await request(app.getHttpServer()).post('/auth/signup/request-otp').send({
-      name: 'E2E Diagnostic Laboratory', mobile, email: `lab-${unique}@example.invalid`, admin: { email, mobile, password },
-    }).expect(201);
+    const signupRequest = await request(app.getHttpServer()).post('/auth/signup/request-otp').send({ name: 'E2E Diagnostic Laboratory', mobile, email: `lab-${unique}@example.invalid`, admin: { email, mobile, password } }).expect(201);
     expect(signupRequest.body.requestId).toBeTruthy();
     expect(signupRequest.body.expiresAt).toBeTruthy();
     expect(signupRequest.body.delivery).toBe('development');
     expect(signupRequest.body.devOtp).toMatch(/^\d{6}$/);
-
     const signupComplete = await request(app.getHttpServer()).post('/auth/signup/verify-otp').send({ requestId: signupRequest.body.requestId, otp: signupRequest.body.devOtp }).expect(201);
     expect(signupComplete.body.success).toBe(true);
     expect(signupComplete.body.lab.id).toBeTruthy();
@@ -53,11 +50,9 @@ describe('Authentication and reporting flow (e2e)', () => {
     expect(login.body.user.email).toBe(email);
     expect(login.body.user.password).toBeUndefined();
     accessToken = login.body.accessToken;
-
     const me = await refreshAgent.get('/auth/me').set('Authorization', `Bearer ${accessToken}`).expect(200);
     expect(me.body.user.id).toBe(login.body.user.id);
     expect(me.body.lab.id).toBe(labId);
-
     const refreshed = await refreshAgent.post('/auth/refresh').expect(201);
     expect(refreshed.body.accessToken).toBeTruthy();
     expect(refreshed.body.refreshToken).toBeUndefined();
@@ -106,7 +101,12 @@ describe('Authentication and reporting flow (e2e)', () => {
     expect(report.body.order.tests).toHaveLength(2);
     expect(report.body.order.tests.every((item: { parameters: unknown[] }) => item.parameters.length === 2)).toBe(true);
     expect(report.body.reportNumber).toBeTruthy();
-    const pdf = await request(app.getHttpServer()).get(`/orders/${orderId}/report/pdf`).set(auth).buffer(true).expect(200);
+
+    const pdf = await request(app.getHttpServer()).get(`/orders/${orderId}/report/pdf`).set(auth).buffer(true).parse((response, callback) => {
+      const chunks: Buffer[] = [];
+      response.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      response.on('end', () => callback(null, Buffer.concat(chunks)));
+    }).expect(200);
     const pdfBuffer = Buffer.isBuffer(pdf.body) ? pdf.body : Buffer.from(pdf.body);
     expect(pdf.headers['content-type']).toContain('application/pdf');
     expect(pdf.headers['content-disposition']).toContain('inline');
