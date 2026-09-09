@@ -58,10 +58,7 @@ describe('Authentication and reporting flow (e2e)', () => {
     expect(signupComplete.body.message).toContain('Signup completed');
     labId = signupComplete.body.lab.id;
 
-    const login = await refreshAgent
-      .post('/auth/login')
-      .send({ email, password })
-      .expect(201);
+    const login = await refreshAgent.post('/auth/login').send({ email, password }).expect(201);
     expect(login.body.accessToken).toBeTruthy();
     expect(login.body.refreshToken).toBeUndefined();
     expect(login.body.user.email).toBe(email);
@@ -75,9 +72,7 @@ describe('Authentication and reporting flow (e2e)', () => {
     expect(me.body.user.id).toBe(login.body.user.id);
     expect(me.body.lab.id).toBe(labId);
 
-    const refreshed = await refreshAgent
-      .post('/auth/refresh')
-      .expect(201);
+    const refreshed = await refreshAgent.post('/auth/refresh').expect(201);
     expect(refreshed.body.accessToken).toBeTruthy();
     expect(refreshed.body.refreshToken).toBeUndefined();
     accessToken = refreshed.body.accessToken;
@@ -127,7 +122,6 @@ describe('Authentication and reporting flow (e2e)', () => {
 
   it('runs patient registration through multi-test final report, PDF download and print response', async () => {
     const auth = { Authorization: `Bearer ${accessToken}` };
-
     const patient = await request(app.getHttpServer())
       .post('/patients')
       .set(auth)
@@ -171,41 +165,27 @@ describe('Authentication and reporting flow (e2e)', () => {
     );
     expect(results).toHaveLength(4);
 
-    await request(app.getHttpServer())
-      .patch(`/orders/${orderId}/results`)
-      .set(auth)
-      .send({ results })
-      .expect(200);
-
-    const entered = await request(app.getHttpServer())
-      .get(`/orders/${orderId}/results`)
-      .set(auth)
-      .expect(200);
+    await request(app.getHttpServer()).patch(`/orders/${orderId}/results`).set(auth).send({ results }).expect(200);
+    const entered = await request(app.getHttpServer()).get(`/orders/${orderId}/results`).set(auth).expect(200);
     expect(entered.body.items).toHaveLength(2);
     expect(entered.body.items.every((item: { results: unknown[] }) => item.results.length === 2)).toBe(true);
 
     await request(app.getHttpServer()).post(`/orders/${orderId}/verify`).set(auth).expect(201);
     await request(app.getHttpServer()).post(`/orders/${orderId}/finalize`).set(auth).expect(201);
 
-    const report = await request(app.getHttpServer())
-      .get(`/orders/${orderId}/report`)
-      .set(auth)
-      .expect(200);
+    const report = await request(app.getHttpServer()).get(`/orders/${orderId}/report`).set(auth).expect(200);
     expect(report.body.order.id).toBe(orderId);
     expect(report.body.order.tests).toHaveLength(2);
     expect(report.body.order.tests.every((item: { parameters: unknown[] }) => item.parameters.length === 2)).toBe(true);
     expect(report.body.reportNumber).toBeTruthy();
 
+    // Use Supertest's native binary parser. This avoids parser/event edge cases and
+    // verifies exactly what a browser download/print request receives.
     const pdf = await request(app.getHttpServer())
       .get(`/orders/${orderId}/report/pdf`)
       .set(auth)
       .buffer(true)
-      .parse((response, callback) => {
-        const chunks: Buffer[] = [];
-        response.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
-        response.on('end', () => callback(null, Buffer.concat(chunks)));
-        response.on('error', callback);
-      })
+      .parse(request.parse.image)
       .expect(200);
 
     const pdfBuffer = Buffer.isBuffer(pdf.body) ? pdf.body : Buffer.from(pdf.body);
