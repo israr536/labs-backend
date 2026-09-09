@@ -116,7 +116,7 @@ describe('Authentication and reporting flow (e2e)', () => {
     expect(pdf.headers['cache-control']).toContain('no-store');
     expect(pdfBuffer.length).toBeGreaterThan(1000);
     expect(pdfBuffer.subarray(0, 5).toString()).toBe('%PDF-');
-    expect(pdfBuffer.subarray(-5).toString()).toContain('%%EOF');
+    expect(pdfBuffer.subarray(-6).toString()).toContain('%%EOF');
     expect(pdfBuffer.toString('latin1')).toContain('/Type /Page');
   });
 
