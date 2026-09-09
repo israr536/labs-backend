@@ -31,7 +31,9 @@ describe('Authentication and reporting flow (e2e)', () => {
     const mobile = `9${String(Date.now()).slice(-9)}`;
     refreshAgent = request.agent(app.getHttpServer());
 
-    const signupRequest = await request(app.getHttpServer()).post('/auth/signup/request-otp').send({ name: 'E2E Diagnostic Laboratory', mobile, email: `lab-${unique}@example.invalid`, admin: { email, mobile, password } }).expect(201);
+    const signupRequest = await request(app.getHttpServer()).post('/auth/signup/request-otp').send({
+      name: 'E2E Diagnostic Laboratory', mobile, email: `lab-${unique}@example.invalid`, admin: { email, mobile, password },
+    }).expect(201);
     expect(signupRequest.body.requestId).toBeTruthy();
     expect(signupRequest.body.expiresAt).toBeTruthy();
     expect(signupRequest.body.delivery).toBe('development');
@@ -66,7 +68,7 @@ describe('Authentication and reporting flow (e2e)', () => {
       { name: 'Comment', inputType: 'TEXT' as const, unit: null, normalMin: null, normalMax: null, displayOrder: 1, isRequired: true },
     ];
     const firstTest = await prisma.test.create({ data: { labId, code: `E2E-A-${unique.slice(0, 8)}`, name: 'E2E Chemistry Test', category: 'E2E', department: 'CHEMISTRY', sampleType: 'SERUM', isActive: true, parameters: { create: parameterData } } });
-    const secondTest = await prisma.test.create({ data: { labId, code: `E2E-B-${unique.slice(0, 8)}`, name: 'E2E Hematology Test', category: 'E2E', department: 'HEMATOLOGY', sampleType: 'BLOOD', isActive: true, parameters: { create: parameterData } } });
+    const secondTest = await prisma.test.create({ data: { labId, code: `E2E-B-${unique.slice(0, 8)}`, name: 'E2E Hematology Test', category: 'E2E', department: 'HEMATOLOGY', sampleType: 'BLOOD', isActive: true, parameters: { create: parameterData } });
     testIds = [firstTest.id, secondTest.id];
   });
 
@@ -83,49 +85,28 @@ describe('Authentication and reporting flow (e2e)', () => {
     const auth = { Authorization: `Bearer ${accessToken}` };
     const patient = await request(app.getHttpServer()).post('/patients').set(auth).send({ name: 'E2E Patient', age: 35, gender: 'MALE', mobile: '9000000001', email: 'patient@example.invalid' }).expect(201);
     patientId = patient.body.id;
-
     const order = await request(app.getHttpServer()).post('/orders').set(auth).send({ patientId, testIds, referredBy: 'E2E Doctor', clinicalNotes: 'E2E reporting flow' }).expect(201);
     orderId = order.body.id;
     expect(order.body.items).toHaveLength(2);
-
     const samples = await request(app.getHttpServer()).post(`/samples/orders/${orderId}`).set(auth).send({}).expect(201);
     expect(Array.isArray(samples.body)).toBe(true);
     expect(samples.body.length).toBeGreaterThanOrEqual(1);
-    for (const sample of samples.body) {
-      for (const status of ['COLLECTED', 'RECEIVED', 'PROCESSING', 'COMPLETED']) {
-        await request(app.getHttpServer()).patch(`/samples/${sample.id}/status`).set(auth).send({ status }).expect(200);
-      }
-    }
-
+    for (const sample of samples.body) for (const status of ['COLLECTED', 'RECEIVED', 'PROCESSING', 'COMPLETED']) await request(app.getHttpServer()).patch(`/samples/${sample.id}/status`).set(auth).send({ status }).expect(200);
     const testDetails = await Promise.all(testIds.map((id) => request(app.getHttpServer()).get(`/tests/${id}`).set(auth).expect(200)));
     const results = testDetails.flatMap((response) => response.body.parameters.map((parameter: { id: string; inputType: string }) => ({ parameterId: parameter.id, value: parameter.inputType === 'NUMBER' ? '50' : 'E2E OK' })));
     expect(results).toHaveLength(4);
-
     await request(app.getHttpServer()).patch(`/orders/${orderId}/results`).set(auth).send({ results }).expect(200);
     const entered = await request(app.getHttpServer()).get(`/orders/${orderId}/results`).set(auth).expect(200);
     expect(entered.body.items).toHaveLength(2);
     expect(entered.body.items.every((item: { results: unknown[] }) => item.results.length === 2)).toBe(true);
-
     await request(app.getHttpServer()).post(`/orders/${orderId}/verify`).set(auth).expect(201);
     await request(app.getHttpServer()).post(`/orders/${orderId}/finalize`).set(auth).expect(201);
-
     const report = await request(app.getHttpServer()).get(`/orders/${orderId}/report`).set(auth).expect(200);
     expect(report.body.order.id).toBe(orderId);
     expect(report.body.order.tests).toHaveLength(2);
     expect(report.body.order.tests.every((item: { parameters: unknown[] }) => item.parameters.length === 2)).toBe(true);
     expect(report.body.reportNumber).toBeTruthy();
-
-    const pdf = await request(app.getHttpServer())
-      .get(`/orders/${orderId}/report/pdf`)
-      .set(auth)
-      .buffer(true)
-      .parse((response, callback) => {
-        const chunks: Buffer[] = [];
-        response.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
-        response.on('end', () => callback(null, Buffer.concat(chunks)));
-        response.on('error', callback);
-      })
-      .expect(200);
+    const pdf = await request(app.getHttpServer()).get(`/orders/${orderId}/report/pdf`).set(auth).buffer(true).expect(200);
     const pdfBuffer = Buffer.isBuffer(pdf.body) ? pdf.body : Buffer.from(pdf.body);
     expect(pdf.headers['content-type']).toContain('application/pdf');
     expect(pdf.headers['content-disposition']).toContain('inline');
