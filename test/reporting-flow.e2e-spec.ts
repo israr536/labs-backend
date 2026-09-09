@@ -68,7 +68,10 @@ describe('Authentication and reporting flow (e2e)', () => {
   });
 
   afterAll(async () => {
-    if (labId) await prisma.lab.delete({ where: { id: labId } }).catch(() => undefined);
+    if (labId) {
+      await prisma.user.deleteMany({ where: { labId } }).catch(() => undefined);
+      await prisma.lab.delete({ where: { id: labId } }).catch(() => undefined);
+    }
     await app?.close();
   });
 
