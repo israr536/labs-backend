@@ -12,8 +12,7 @@ INSERT INTO "TestParameter" (
   "normalMax",
   "displayOrder",
   "isRequired",
-  "createdAt",
-  "updatedAt"
+  "createdAt"
 )
 SELECT
   gen_random_uuid(),
@@ -25,7 +24,6 @@ SELECT
   dp."normalMax",
   dp."displayOrder",
   dp."isRequired",
-  CURRENT_TIMESTAMP,
   CURRENT_TIMESTAMP
 FROM "Test" AS t
 JOIN "TestDefinition" AS td
