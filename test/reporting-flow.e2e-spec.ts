@@ -31,7 +31,6 @@ describe('Authentication and reporting flow (e2e)', () => {
     const mobile = `9${String(Date.now()).slice(-9)}`;
     refreshAgent = request.agent(app.getHttpServer());
 
-    // Full public signup: request OTP -> verify OTP -> lab/admin creation.
     const signupRequest = await request(app.getHttpServer())
       .post('/auth/signup/request-otp')
       .send({
@@ -59,7 +58,6 @@ describe('Authentication and reporting flow (e2e)', () => {
     expect(signupComplete.body.message).toContain('Signup completed');
     labId = signupComplete.body.lab.id;
 
-    // Full sign-in and authenticated identity check.
     const login = await refreshAgent
       .post('/auth/login')
       .send({ email, password })
@@ -77,7 +75,6 @@ describe('Authentication and reporting flow (e2e)', () => {
     expect(me.body.user.id).toBe(login.body.user.id);
     expect(me.body.lab.id).toBe(labId);
 
-    // Refresh must work through the httpOnly cookie issued by login.
     const refreshed = await refreshAgent
       .post('/auth/refresh')
       .expect(201);
@@ -85,8 +82,6 @@ describe('Authentication and reporting flow (e2e)', () => {
     expect(refreshed.body.refreshToken).toBeUndefined();
     accessToken = refreshed.body.accessToken;
 
-    // Create two tests inside the newly signed-up lab so the rest of the flow
-    // validates a real multi-test report for a brand-new customer account.
     const parameterData = [
       { name: 'Result', inputType: 'NUMBER' as const, unit: 'mg/dL', normalMin: 1, normalMax: 100, displayOrder: 0, isRequired: true },
       { name: 'Comment', inputType: 'TEXT' as const, unit: null, normalMin: null, normalMax: null, displayOrder: 1, isRequired: true },
@@ -201,7 +196,6 @@ describe('Authentication and reporting flow (e2e)', () => {
     expect(report.body.order.tests.every((item: { parameters: unknown[] }) => item.parameters.length === 2)).toBe(true);
     expect(report.body.reportNumber).toBeTruthy();
 
-    // The PDF endpoint is the same endpoint used for browser download/printing.
     const pdf = await request(app.getHttpServer())
       .get(`/orders/${orderId}/report/pdf`)
       .set(auth)
@@ -225,7 +219,6 @@ describe('Authentication and reporting flow (e2e)', () => {
 
   it('logs out the refresh-token session and prevents reuse', async () => {
     await refreshAgent.post('/auth/logout').expect(200).expect({ success: true });
-
     await refreshAgent.post('/auth/refresh').expect(400);
   });
 });
