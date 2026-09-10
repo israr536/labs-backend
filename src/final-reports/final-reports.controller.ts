@@ -17,7 +17,7 @@ export class FinalReportsController {
     private readonly workflow: FinalReportWorkflowService,
   ) {}
 
-  @Roles(UserRole.ADMIN, UserRole.PATHOLOGIST)
+  @Roles(UserRole.ADMIN, UserRole.TECHNICIAN)
   @Post(':orderId/finalize')
   finalize(@CurrentUser() user: AuthUser, @Param('orderId') orderId: string) {
     return this.workflow.finalize(user, orderId);
