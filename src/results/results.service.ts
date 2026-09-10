@@ -33,11 +33,13 @@ export class ResultsService {
 
     const normalized = await Promise.all(inputs.map(async (input, index) => {
       const parameterId = requiredString(input.parameterId, `results.${index}.parameterId`);
-      const rawValue = requiredString(input.value, `results.${index}.value`).trim();
-      if (seen.has(parameterId)) throw new BadRequestException(`Duplicate result for parameter ${parameterId}`);
-      seen.add(parameterId);
       const target = byParameter.get(parameterId);
       if (!target) throw new BadRequestException(`results.${index}.parameterId does not belong to this order`);
+      if (seen.has(parameterId)) throw new BadRequestException(`Duplicate result for parameter ${parameterId}`);
+      seen.add(parameterId);
+
+      const rawValue = input.value === undefined || input.value === null ? '' : String(input.value).trim();
+      if (!rawValue && target.parameter.isRequired) throw new BadRequestException(`results.${index}.value is required`);
 
       const existing = target.item.results.find((row) => row.parameterId === parameterId);
       if (existing?.verifiedAt) {
@@ -46,7 +48,7 @@ export class ResultsService {
       if (existing) changedParameterIds.push(parameterId);
       else createdParameterIds.push(parameterId);
 
-      const value = this.validateValue(target.parameter, rawValue, index);
+      const value = rawValue ? this.validateValue(target.parameter, rawValue, index) : '';
       const sampleId = input.sampleId === undefined ? undefined : requiredString(input.sampleId, `results.${index}.sampleId`);
       if (sampleId) {
         const sample = order.samples.find((item) => item.id === sampleId);
@@ -55,13 +57,13 @@ export class ResultsService {
       }
 
       const analyzer = input.analyzer === undefined ? null : requiredString(input.analyzer, `results.${index}.analyzer`);
-      const range = await this.referenceRanges.resolve(currentUser, parameterId, order.patient, target.item.test.method, analyzer);
+      const range = value ? await this.referenceRanges.resolve(currentUser, parameterId, order.patient, target.item.test.method, analyzer) : null;
       return {
         orderItemId: target.item.id,
         parameterId,
         sampleId,
         value,
-        flag: this.calculateFlag(target.parameter, value, range),
+        flag: value ? this.calculateFlag(target.parameter, value, range) : undefined,
         referenceRangeId: range?.id ?? null,
         referenceRangeSnapshot: range ? {
           id: range.id,
@@ -144,7 +146,7 @@ export class ResultsService {
     const verifiedAt = new Date();
     await this.prisma.$transaction(async (tx) => {
       const locked = await tx.labOrder.updateMany({ where: { id: order.id, labId: currentUser.labId, revision: order.revision, status: OrderStatus.RESULT_ENTERED }, data: { status: OrderStatus.VERIFIED, revision: { increment: 1 } } });
-      if (locked.count !== 1) throw new ConflictException('This order changed while you were verifying it. Reload and try again.');
+      if (locked.count !== 1) throw new ConflictException('This order changed while you were verifying it. Reload the order and try again.');
       const verified = await tx.orderResult.updateMany({ where: { id: { in: resultIds }, verifiedAt: null }, data: { verifiedAt, verifiedById: currentUser.id } });
       if (verified.count !== resultIds.length) throw new ConflictException('One or more results changed while verification was in progress. Reload the order and try again.');
       await tx.auditLog.create({
