@@ -36,6 +36,9 @@ export class SamplesService {
     const explicitSpecimenType = optionalString(body.specimenType, 'specimenType');
     const explicitContainer = optionalString(body.container, 'container');
     const specimenTypes = [...new Set(order.items.map((item) => item.test.sampleType?.trim()).filter(Boolean))] as string[];
+    if (explicitSpecimenType && !specimenTypes.includes(explicitSpecimenType)) {
+      throw new BadRequestException('The requested specimen type is not configured for this order');
+    }
     const types = explicitSpecimenType ? [explicitSpecimenType] : specimenTypes;
     if (types.length === 0) throw new BadRequestException('No specimen type is configured for the order tests');
 
