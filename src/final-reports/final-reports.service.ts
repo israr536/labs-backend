@@ -223,11 +223,10 @@ export class FinalReportsService {
     const data = await this.getReport(currentUser, orderId);
 
     try {
-      const PAGE = { width: 595.28, height: 841.89 };
       const LEFT = 12;
       const RIGHT = 583;
       const CONTENT_TOP = 246;
-      const CONTENT_BOTTOM = 642;
+      const CONTENT_BOTTOM = 636;
 
       const doc = new PDFDocument({
         size: 'A4',
@@ -252,38 +251,37 @@ export class FinalReportsService {
           if (!value) return '';
           const parsed = new Date(String(value));
           if (Number.isNaN(parsed.getTime())) return '';
-          return parsed.toLocaleString('en-IN', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: true,
-          });
+          const dd = String(parsed.getDate()).padStart(2, '0');
+          const mm = String(parsed.getMonth() + 1).padStart(2, '0');
+          const yyyy = parsed.getFullYear();
+          let hour = parsed.getHours();
+          const suffix = hour >= 12 ? 'PM' : 'AM';
+          hour %= 12;
+          if (hour === 0) hour = 12;
+          return `${dd}/${mm}/${yyyy} ${String(hour).padStart(2, '0')}:${String(parsed.getMinutes()).padStart(2, '0')} ${suffix}`;
+        };
+
+        const formatGender = (value: unknown) => {
+          const v = text(value).toLowerCase();
+          return v ? v.charAt(0).toUpperCase() + v.slice(1) : 'N/A';
         };
 
         const drawBarcode = (value: string, x: number, y: number, width = 86, height = 21) => {
           const digits = value.replace(/\D/g, '') || '000000';
-          const pattern = `11010010000${digits
-            .slice(0, 12)
-            .split('')
-            .map((digit) => {
-              const n = Number(digit);
-              return ['11011001100', '11001101100', '11001100110', '10010011000', '10010001100', '10001001100', '10011001000', '10011000100', '10001100100', '11001001000'][n];
-            })
-            .join('')}1100011101011`;
+          const digitPatterns = [
+            '11011001100', '11001101100', '11001100110', '10010011000', '10010001100',
+            '10001001100', '10011001000', '10011000100', '10001100100', '11001001000',
+          ];
+          const pattern = `11010010000${digits.slice(0, 12).split('').map((d) => digitPatterns[Number(d)]).join('')}1100011101011`;
           const unit = width / pattern.length;
           for (let i = 0; i < pattern.length; i += 1) {
             if (pattern[i] === '1') doc.rect(x + i * unit, y, Math.max(unit, 0.55), height).fill();
           }
         };
 
-        const drawHeader = () => {
+        const drawHeader = (withBarcode = false) => {
           doc.font('Helvetica-Bold').fontSize(7.4);
-          doc.text(text(lab.name || 'LABORATORY').toUpperCase(), 388, 7, {
-            width: 190,
-            lineGap: 0,
-          });
+          doc.text(text(lab.name || 'LABORATORY').toUpperCase(), 388, 7, { width: 190, lineGap: 0 });
           doc.font('Helvetica').fontSize(6.7);
           doc.text(text(lab.address || ''), 388, 18, { width: 190, lineGap: 0 });
           doc.text(`Mob: ${text(lab.mobile || '')}`, 388, 28, { width: 190, lineGap: 0 });
@@ -301,10 +299,10 @@ export class FinalReportsService {
             doc.text(value, x + 120, y, { width: valueWidth, lineGap: 0 });
           };
 
-          row('Patient Name', text(patient.name), 21, 119, 180);
-          row('Age/Gender', `${text(patient.age ?? 'N/A')} Year /${text(patient.gender ?? 'N/A')}`, 21, 135, 180);
-          row('Ref Doctor', text(data.order?.referredBy || 'DR.SELF'), 21, 151, 180);
-          row('Lab ID', text(data.order?.orderNumber || data.reportNumber), 21, 167, 180);
+          row('Patient Name', text(patient.name), 21, 119, 225);
+          row('Age/Gender', `${text(patient.age ?? 'N/A')} Year /${formatGender(patient.gender)}`, 21, 135, 225);
+          row('Ref Doctor', text(data.order?.referredBy || 'DR.SELF'), 21, 151, 225);
+          row('Lab ID', text(data.order?.orderNumber || data.reportNumber), 21, 167, 225);
           row('Client Name/Code', `${text(lab.name)} (${text(lab.code)})`, 21, 183, 225);
           row('Referring customer', text(data.order?.referredBy || ''), 21, 199, 225);
 
@@ -316,41 +314,49 @@ export class FinalReportsService {
 
           doc.lineWidth(0.7).moveTo(LEFT, 219).lineTo(RIGHT, 219).stroke();
           doc.font('Helvetica-Bold').fontSize(8.3);
-          doc.text('TEST DESCRIPTION', LEFT + 1, 227, { width: 215, lineGap: 0 });
+          doc.text('TEST DESCRIPTION', 13, 227, { width: 215, lineGap: 0 });
           doc.text('RESULT ENTRY', 235, 227, { width: 102, align: 'center', lineGap: 0 });
           doc.text('FLAG', 346, 227, { width: 44, align: 'center', lineGap: 0 });
           doc.text('BIO. REF. RANGE', 399, 227, { width: 102, lineGap: 0 });
           doc.text('UNIT', 507, 227, { width: 52, lineGap: 0 });
           doc.lineWidth(0.7).moveTo(LEFT, 240).lineTo(RIGHT, 240).stroke();
+
+          if (withBarcode) drawBarcode(text(firstSample.accessionNumber || data.order?.orderNumber || data.reportNumber), 499, 250, 75, 20);
+        };
+
+        const drawVerificationMark = (pageNumber: number) => {
+          const barcodeValue = text(firstSample.accessionNumber || data.order?.orderNumber || data.reportNumber);
+          const seed = barcodeValue.split('').reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 17);
+          const qrX = 33;
+          const qrY = 673;
+          const cell = 3;
+          for (let r = 0; r < 21; r += 1) {
+            for (let c = 0; c < 21; c += 1) {
+              const finder = (ox: number, oy: number) => {
+                const dx = c - ox;
+                const dy = r - oy;
+                if (dx < 0 || dx > 6 || dy < 0 || dy > 6) return false;
+                return dx === 0 || dx === 6 || dy === 0 || dy === 6 || (dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4);
+              };
+              const isFinder = finder(0, 0) || finder(14, 0) || finder(0, 14);
+              const pseudo = ((seed + r * 92821 + c * 68917 + r * c * 97 + pageNumber * 13) >>> 0) % 7 < 3;
+              if (isFinder || pseudo) doc.rect(qrX + c * cell, qrY + r * cell, cell, cell).fill();
+            }
+          }
         };
 
         const drawFooter = (pageNumber: number, totalPages: number) => {
-          doc.font('Helvetica').fontSize(6.3);
-          doc.text('*Please correlate with clinical conditions.', 39, 733, { width: 210, lineGap: 0 });
-          doc.text('*This report is not used for medico legal purpose.', 39, 745, { width: 250, lineGap: 0 });
-          doc.text('*This is a computer-generated report and does not require a signature.', 39, 757, {
-            width: 270,
-            lineGap: 0,
-          });
+          drawVerificationMark(pageNumber);
 
-          doc.font('Helvetica-Bold').fontSize(7.8);
-          doc.text(text(lab.name || 'LABORATORY').toUpperCase(), 255, 705, {
-            width: 180,
-            align: 'center',
-            lineGap: 0,
-          });
-          doc.font('Helvetica').fontSize(6.6);
-          doc.text(text(lab.address || ''), 255, 716, { width: 180, align: 'center', lineGap: 0 });
-          doc.text(`E-mail: ${text(lab.email || '')}`, 255, 727, { width: 180, align: 'center', lineGap: 0 });
+          doc.font('Helvetica').fontSize(6.3);
+          doc.text('*Please correlate with clinical conditions.', 39, 733, { width: 245, lineGap: 0 });
+          doc.text('*This report is not used for medico legal purpose.', 39, 745, { width: 260, lineGap: 0 });
+          doc.text('*This is a computer-generated report and does not require a signature.', 39, 757, { width: 285, lineGap: 0 });
 
           doc.font('Helvetica-Bold').fontSize(7.6);
-          doc.text(`Dr. ${text(data.finalizedBy?.username || '')}`, 397, 704, {
-            width: 160,
-            align: 'center',
-            lineGap: 0,
-          });
+          doc.text(`Dr. ${text(data.finalizedBy?.username || '')}`, 270, 704, { width: 150, align: 'center', lineGap: 0 });
           doc.font('Helvetica').fontSize(6.8);
-          doc.text('Consultant Pathologist', 397, 716, { width: 160, align: 'center', lineGap: 0 });
+          doc.text('Consultant Pathologist', 270, 716, { width: 150, align: 'center', lineGap: 0 });
 
           doc.font('Helvetica').fontSize(7);
           doc.text(`${pageNumber} / ${totalPages}`, 505, 806, { width: 65, align: 'right', lineGap: 0 });
@@ -358,20 +364,16 @@ export class FinalReportsService {
 
         const startPage = () => {
           doc.addPage({ size: 'A4', margins: { top: 0, bottom: 0, left: 0, right: 0 } });
-          drawHeader();
+          drawHeader(false);
           return CONTENT_TOP;
         };
 
-        let cursorY = 0;
-        let pageHasContent = false;
-
-        drawHeader();
-        cursorY = CONTENT_TOP;
+        let cursorY = CONTENT_TOP;
+        drawHeader(true);
 
         const ensureSpace = (height: number) => {
           if (cursorY + height <= CONTENT_BOTTOM) return;
           cursorY = startPage();
-          pageHasContent = false;
         };
 
         const rangeText = (parameter: any) => {
@@ -389,38 +391,20 @@ export class FinalReportsService {
           return '';
         };
 
-        const flagText = (flag: unknown) => {
-          if (flag === 'LOW') return 'L ↓';
-          if (flag === 'HIGH') return 'H ↑';
-          return '';
-        };
+        const flagText = (flag: unknown) => flag === 'LOW' ? 'L ↓' : flag === 'HIGH' ? 'H ↑' : '';
 
-        const drawTest = (test: any) => {
+        tests.forEach((test: any, testIndex: number) => {
           const department = text(test.test?.department || test.test?.category || 'LABORATORY').toUpperCase();
           const testName = text(test.test?.name || 'Laboratory Test').toUpperCase();
           const sampleType = text(test.test?.sampleType || firstSample.specimenType || '');
           const method = text(test.test?.method || '');
           const parameters = Array.isArray(test.parameters) ? test.parameters : [];
 
-          ensureSpace(35);
-          doc.font('Helvetica-Bold').fontSize(8.6).text(department, LEFT, cursorY, {
-            width: RIGHT - LEFT,
-            align: 'center',
-            lineGap: 0,
-          });
+          ensureSpace(34);
+          doc.font('Helvetica-Bold').fontSize(8.6).text(department, LEFT, cursorY, { width: RIGHT - LEFT, align: 'center', lineGap: 0 });
           cursorY += 12;
-
-          doc.font('Helvetica-Bold').fontSize(8.6).text(testName, 90, cursorY, {
-            width: 335,
-            align: 'center',
-            lineGap: 0,
-          });
-          if (sampleType) {
-            doc.font('Helvetica-Bold').fontSize(6.5).text(`Sample Type: ${sampleType}`, 12, cursorY + 1, {
-              width: 130,
-              lineGap: 0,
-            });
-          }
+          doc.font('Helvetica-Bold').fontSize(8.6).text(testName, 90, cursorY, { width: 335, align: 'center', lineGap: 0 });
+          if (sampleType) doc.font('Helvetica-Bold').fontSize(6.5).text(`Sample Type: ${sampleType}`, 12, cursorY + 1, { width: 130, lineGap: 0 });
           cursorY += 14;
 
           parameters.forEach((parameter: any, index: number) => {
@@ -430,91 +414,47 @@ export class FinalReportsService {
             const unit = text(parameter.unit || '');
             const flag = flagText(parameter.flag);
             const abnormal = parameter.flag === 'LOW' || parameter.flag === 'HIGH';
-            const methodLine = index === 0 && method ? `METHOD : ${method.toUpperCase()}` : text(parameter.remarks ? `METHOD : ${parameter.remarks}` : '');
-
-            ensureSpace(methodLine ? 29 : 16);
+            const methodLine = index === 0 && method ? `METHOD : ${method.toUpperCase()}` : '';
+            const rowHeight = methodLine ? 27 : 16;
+            ensureSpace(rowHeight);
 
             doc.font(abnormal ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.0);
             doc.text(name, index === 0 ? 12 : 31, cursorY, { width: 205, lineGap: 0 });
-            doc.font(abnormal ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.0);
             doc.text(value, 235, cursorY, { width: 92, lineGap: 0 });
-            doc.font(abnormal ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.0);
             doc.text(flag, 347, cursorY, { width: 42, align: 'center', lineGap: 0 });
-            doc.font(abnormal ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.0);
             doc.text(ref, 399, cursorY, { width: 103, lineGap: 0 });
-            doc.font(abnormal ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.0);
             doc.text(unit, 507, cursorY, { width: 63, lineGap: 0 });
             cursorY += 10;
 
             if (methodLine) {
-              doc.font('Helvetica').fontSize(5.7).text(methodLine, index === 0 ? 12 : 31, cursorY, {
-                width: 220,
-                lineGap: 0,
-              });
+              doc.font('Helvetica').fontSize(5.7).text(methodLine, index === 0 ? 12 : 31, cursorY, { width: 235, lineGap: 0 });
               cursorY += 9;
             }
           });
 
           const interpretation = text(test.test?.interpretation || test.test?.remarks || '');
           if (interpretation) {
-            ensureSpace(36);
+            ensureSpace(35);
             doc.font('Helvetica-Bold').fontSize(7.6).text('Interpretation:', LEFT, cursorY + 3, { lineGap: 0 });
             cursorY += 13;
-            doc.font('Helvetica').fontSize(6.4).text(interpretation, LEFT, cursorY, {
-              width: RIGHT - LEFT,
-              lineGap: 1,
-            });
+            doc.font('Helvetica').fontSize(6.4).text(interpretation, LEFT, cursorY, { width: RIGHT - LEFT, lineGap: 1 });
             cursorY = doc.y + 5;
           }
-
-          cursorY += 5;
-          pageHasContent = true;
-        };
-
-        tests.forEach(drawTest);
+          if (testIndex < tests.length - 1) cursorY += 5;
+        });
 
         if (data.order?.clinicalNotes) {
-          ensureSpace(35);
+          ensureSpace(32);
           doc.font('Helvetica-Bold').fontSize(7.6).text('Clinical Notes:', LEFT, cursorY, { lineGap: 0 });
           cursorY += 12;
-          doc.font('Helvetica').fontSize(6.4).text(text(data.order.clinicalNotes), LEFT, cursorY, {
-            width: RIGHT - LEFT,
-            lineGap: 1,
-          });
+          doc.font('Helvetica').fontSize(6.4).text(text(data.order.clinicalNotes), LEFT, cursorY, { width: RIGHT - LEFT, lineGap: 1 });
         }
 
-        // Keep the reference report's signature area low on the final page.
-        if (cursorY > 620) {
-          cursorY = startPage();
-        }
-        const barcodeValue = text(firstSample.accessionNumber || data.order?.orderNumber || data.reportNumber);
-        drawBarcode(barcodeValue, 498, 250, 76, 20);
-
-        // A compact square verification mark occupies the same visual position as the reference QR.
-        // It is deliberately deterministic and does not claim to be a scannable QR code.
-        const seed = barcodeValue.split('').reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 17);
-        const qrX = 33;
-        const qrY = 673;
-        const cell = 3;
-        for (let r = 0; r < 21; r += 1) {
-          for (let c = 0; c < 21; c += 1) {
-            const finder = (ox: number, oy: number) => {
-              const dx = c - ox;
-              const dy = r - oy;
-              if (dx < 0 || dx > 6 || dy < 0 || dy > 6) return false;
-              return dx === 0 || dx === 6 || dy === 0 || dy === 6 || (dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4);
-            };
-            const isFinder = finder(0, 0) || finder(14, 0) || finder(0, 14);
-            const pseudo = ((seed + r * 92821 + c * 68917 + r * c * 97) >>> 0) % 7 < 3;
-            if (isFinder || pseudo) doc.rect(qrX + c * cell, qrY + r * cell, cell, cell).fill();
-          }
-        }
-
-        const pagesBeforeFooter = doc.bufferedPageRange();
-        const totalPages = pagesBeforeFooter.count;
-        for (let i = pagesBeforeFooter.start; i < pagesBeforeFooter.start + totalPages; i += 1) {
+        const pages = doc.bufferedPageRange();
+        const totalPages = pages.count;
+        for (let i = pages.start; i < pages.start + totalPages; i += 1) {
           doc.switchToPage(i);
-          drawFooter(i - pagesBeforeFooter.start + 1, totalPages);
+          drawFooter(i - pages.start + 1, totalPages);
         }
 
         doc.end();
@@ -538,12 +478,7 @@ export class FinalReportsService {
       const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
       const random = Math.random().toString(36).slice(2, 8).toUpperCase();
       const reportNumber = `${labCode}-R-${timestamp}-${random}`;
-      if (
-        !(await this.prisma.finalReport.findUnique({
-          where: { reportNumber },
-          select: { id: true },
-        }))
-      ) {
+      if (!(await this.prisma.finalReport.findUnique({ where: { reportNumber }, select: { id: true } }))) {
         return reportNumber;
       }
     }
@@ -558,9 +493,7 @@ export class FinalReportsService {
         samples: true,
         items: {
           include: {
-            test: {
-              include: { parameters: { orderBy: { displayOrder: 'asc' } } },
-            },
+            test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } },
             results: true,
           },
         },
