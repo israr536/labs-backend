@@ -208,11 +208,6 @@ export class FinalReportsService {
     });
     if (!report) throw new NotFoundException('Final report not found');
 
-    // The snapshot is intentionally persisted as JSON so a finalized report remains
-    // immutable even when the underlying patient/test catalog changes. Cast the
-    // snapshot at this boundary so consumers such as PDF generation can use the
-    // persisted snapshot shape without pretending Prisma's JsonValue has a static
-    // domain-specific structure.
     const snapshot = report.snapshot as any;
     return {
       id: report.id,
@@ -226,77 +221,329 @@ export class FinalReportsService {
 
   async generatePdf(currentUser: AuthUser, orderId: string): Promise<Buffer> {
     const data = await this.getReport(currentUser, orderId);
+
     try {
-      const doc = new PDFDocument({ size: 'A4', margin: 42 });
+      const doc = new PDFDocument({
+        size: 'A4',
+        margins: { top: 168, bottom: 82, left: 38, right: 38 },
+        bufferPages: true,
+        autoFirstPage: true,
+      });
       const chunks: Buffer[] = [];
 
       return await new Promise<Buffer>((resolve, reject) => {
         doc.on('data', (chunk: Buffer) => chunks.push(chunk));
-        doc.on('end', () => resolve(Buffer.concat(chunks)));
         doc.on('error', reject);
 
         const text = (value: unknown) => String(value ?? '');
         const date = (value: unknown) => {
           if (!value) return 'N/A';
           const parsed = new Date(String(value));
-          return Number.isNaN(parsed.getTime()) ? 'N/A' : parsed.toLocaleString('en-IN');
+          return Number.isNaN(parsed.getTime())
+            ? 'N/A'
+            : parsed.toLocaleString('en-IN', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true,
+              });
         };
 
-        doc.font('Helvetica-Bold').fontSize(18).text(text(data.lab?.name || 'Laboratory'), {
-          align: 'center',
-        });
-        doc.font('Helvetica').fontSize(8).text(text(data.lab?.address || ''), {
-          align: 'center',
-        });
-        doc.text(
-          `${text(data.lab?.mobile || '')}${data.lab?.email ? ` | ${text(data.lab.email)}` : ''}`,
-          { align: 'center' },
-        );
-        doc.moveDown();
-        doc.font('Helvetica-Bold').fontSize(12).text('FINAL LABORATORY REPORT');
-        doc.font('Helvetica').fontSize(9);
-        doc.text(`Report No: ${text(data.reportNumber)}`);
-        doc.text(`Version: ${text(data.version)}`);
-        doc.text(`Patient: ${text(data.order?.patient?.name)}`);
-        doc.text(`Age / Gender: ${text(data.order?.patient?.age ?? 'N/A')} / ${text(data.order?.patient?.gender ?? 'N/A')}`);
-        doc.text(`Mobile: ${text(data.order?.patient?.mobile || 'N/A')}`);
-        doc.text(`Reported: ${date(data.finalizedAt)}`);
-        doc.moveDown();
+        const patient = data.order?.patient ?? {};
+        const samples = Array.isArray(data.order?.samples) ? data.order.samples : [];
+        const firstSample = samples[0] ?? {};
+        const lab = data.lab ?? {};
 
-        const tests = Array.isArray(data.order?.tests) ? data.order.tests : [];
-        tests.forEach((test: any, testIndex: number) => {
-          if (testIndex > 0) doc.moveDown();
-          doc.font('Helvetica-Bold').fontSize(11).text(text(test.test?.name || 'Laboratory Test'));
-          doc.font('Helvetica').fontSize(8).text(
-            `${text(test.test?.department || test.test?.category || '')}${test.test?.sampleType ? ` | Specimen: ${text(test.test.sampleType)}` : ''}`,
-          );
-          doc.moveDown(0.3);
+        const drawTopHeader = () => {
+          const left = 38;
+          const right = 557;
+          const top = 8;
 
-          const rows = Array.isArray(test.parameters) ? test.parameters : [];
-          rows.forEach((parameter: any) => {
-            const range = parameter.referenceRange;
-            const rangeText =
-              typeof range === 'string'
-                ? range
-                : range && typeof range === 'object'
-                  ? `${range.low ?? parameter.normalMin ?? ''}${range.high != null ? ` - ${range.high}` : ''}`
-                  : `${parameter.normalMin ?? ''}${parameter.normalMax != null ? ` - ${parameter.normalMax}` : ''}`;
-            doc.font('Helvetica').fontSize(8).text(
-              `${text(parameter.name)}: ${text(parameter.value ?? 'N/A')} ${text(parameter.unit || '')}  Ref: ${rangeText || '—'}  ${text(parameter.flag || '')}`,
-            );
+          doc.font('Helvetica-Bold').fontSize(8.5);
+          doc.text(text(lab.name || 'LABORATORY'), 365, top, {
+            width: 192,
+            align: 'left',
+            lineGap: 0,
           });
+          doc.font('Helvetica').fontSize(8);
+          doc.text(text(lab.address || ''), 365, top + 12, {
+            width: 192,
+            lineGap: 0,
+          });
+          doc.text(`Mob: ${text(lab.mobile || '')}`, 365, top + 24, {
+            width: 192,
+            lineGap: 0,
+          });
+          doc.text(`E-mail: ${text(lab.email || '')}`, 365, top + 36, {
+            width: 192,
+            lineGap: 0,
+          });
+
+          const boxTop = 110;
+          const boxBottom = 205;
+          doc.rect(left, boxTop, right - left, boxBottom - boxTop).stroke();
+
+          doc.font('Helvetica').fontSize(8.5);
+          const row = (label: string, value: string, x: number, y: number, width = 170) => {
+            doc.text(label, x, y, { width: 110 });
+            doc.text(':', x + 108, y);
+            doc.font('Helvetica-Bold').text(value, x + 120, y, { width });
+            doc.font('Helvetica');
+          };
+
+          row('Patient Name', text(patient.name), 47, 124);
+          row(
+            'Age/Gender',
+            `${text(patient.age ?? 'N/A')} Year /${text(patient.gender ?? 'N/A')}`,
+            47,
+            141,
+          );
+          row('Ref Doctor', text(data.order?.referredBy || 'DR.SELF'), 47, 158);
+          row('Lab ID', text(data.order?.orderNumber || data.reportNumber), 47, 175);
+          row('Client Name/Code', `${text(lab.name)} (${text(lab.code)})`, 47, 192, 220);
+          row('Referring customer', text(data.order?.referredBy || ''), 47, 209);
+
+          row('Registration', date(data.order?.orderedAt), 285, 124, 170);
+          row('Collected Date', date(firstSample.collectedAt), 285, 141, 170);
+          row('Reported Date', date(data.finalizedAt), 285, 158, 170);
+          row(
+            'Barcode No',
+            text(firstSample.accessionNumber || data.order?.orderNumber || ''),
+            285,
+            175,
+            170,
+          );
+          row('Report Status', 'Final', 285, 192, 170);
+
+          doc.moveTo(left, 218).lineTo(right, 218).stroke();
+          doc.font('Helvetica-Bold').fontSize(8.5);
+          doc.text('TEST DESCRIPTION', left, 224, { width: 205 });
+          doc.text('RESULT ENTRY', 265, 224, { width: 92, align: 'center' });
+          doc.text('FLAG', 358, 224, { width: 50, align: 'center' });
+          doc.text('BIO. REF. RANGE', 405, 224, { width: 105 });
+          doc.text('UNIT', 515, 224, { width: 42 });
+          doc.moveTo(left, 239).lineTo(right, 239).stroke();
+        };
+
+        const drawFooter = () => {
+          const pageHeight = doc.page.height;
+          const footerY = pageHeight - 62;
+          doc.font('Helvetica').fontSize(6.5);
+          doc.text('*This report is not used for medico legal purpose.', 40, footerY, { width: 245 });
+          doc.text(
+            '*This is a computer-generated report and does not require a signature.',
+            40,
+            footerY + 11,
+            { width: 290 },
+          );
+          doc.text('*Please correlate with clinical conditions.', 40, footerY + 22, { width: 245 });
+
+          doc.font('Helvetica-Bold').fontSize(8);
+          doc.text(text(lab.name || 'LABORATORY'), 250, footerY - 3, {
+            width: 190,
+            align: 'center',
+          });
+          doc.font('Helvetica').fontSize(7);
+          doc.text(text(lab.address || ''), 250, footerY + 9, {
+            width: 190,
+            align: 'center',
+          });
+          doc.text(text(lab.email || ''), 250, footerY + 20, {
+            width: 190,
+            align: 'center',
+          });
+
+          doc.font('Helvetica-Bold').fontSize(7.5);
+          doc.text(`Dr. ${text(data.finalizedBy?.username || '')}`, 395, footerY - 1, {
+            width: 120,
+            align: 'center',
+          });
+          doc.font('Helvetica').fontSize(7);
+          doc.text('Consultant Pathologist', 395, footerY + 12, {
+            width: 120,
+            align: 'center',
+          });
+        };
+
+        const startNewPage = () => {
+          doc.addPage();
+          drawTopHeader();
+          doc.y = 247;
+        };
+
+        drawTopHeader();
+        doc.y = 247;
+
+        const usableBottom = () => doc.page.height - 92;
+        const ensureSpace = (height: number) => {
+          if (doc.y + height > usableBottom()) startNewPage();
+        };
+
+        const formatReferenceRange = (parameter: any) => {
+          const range = parameter.referenceRange;
+          if (typeof range === 'string') return range;
+          if (range && typeof range === 'object') {
+            if (range.displayRange) return String(range.displayRange);
+            if (range.low != null && range.high != null) return `${range.low} - ${range.high}`;
+            if (range.low != null) return `>= ${range.low}`;
+            if (range.high != null) return `<= ${range.high}`;
+          }
+          if (parameter.normalMin != null && parameter.normalMax != null) {
+            return `${parameter.normalMin} - ${parameter.normalMax}`;
+          }
+          if (parameter.normalMin != null) return `>= ${parameter.normalMin}`;
+          if (parameter.normalMax != null) return `<= ${parameter.normalMax}`;
+          return '';
+        };
+
+        const formatValue = (parameter: any) => {
+          const value = parameter.value;
+          return value == null || String(value).trim() === '' ? '' : String(value);
+        };
+
+        const flagText = (flag: unknown) => {
+          if (flag === 'LOW') return 'L ↓';
+          if (flag === 'HIGH') return 'H ↑';
+          return '';
+        };
+
+        const departmentPrinted = new Set<string>();
+        const tests = Array.isArray(data.order?.tests) ? data.order.tests : [];
+
+        tests.forEach((test: any, testIndex: number) => {
+          const department = text(test.test?.department || test.test?.category || 'LABORATORY');
+          const testName = text(test.test?.name || 'Laboratory Test');
+          const sampleType = text(test.test?.sampleType || firstSample.specimenType || '');
+
+          ensureSpace(42);
+          if (!departmentPrinted.has(department)) {
+            doc.font('Helvetica-Bold').fontSize(9.5).text(department, 38, doc.y, {
+              width: 519,
+              align: 'center',
+            });
+            departmentPrinted.add(department);
+          }
+
+          doc.font('Helvetica-Bold').fontSize(9.5).text(testName, 120, doc.y, {
+            width: 300,
+            align: 'center',
+          });
+
+          if (sampleType) {
+            doc.font('Helvetica').fontSize(7).text(`Sample Type: ${sampleType}`, 38, doc.y + 1, {
+              width: 150,
+            });
+          }
+          doc.moveDown(0.35);
+
+          const method = text(test.test?.method || '');
+          const parameters = Array.isArray(test.parameters) ? test.parameters : [];
+
+          parameters.forEach((parameter: any, parameterIndex: number) => {
+            const parameterName = text(parameter.name);
+            const value = formatValue(parameter);
+            const ref = formatReferenceRange(parameter);
+            const unit = text(parameter.unit || '');
+            const flag = flagText(parameter.flag);
+
+            ensureSpace(31);
+
+            const xName = parameterIndex === 0 ? 38 : 58;
+            const nameWidth = 210;
+            const resultX = 265;
+            const flagX = 358;
+            const rangeX = 405;
+            const unitX = 515;
+            const abnormal = parameter.flag && parameter.flag !== 'NORMAL';
+
+            doc.font(abnormal ? 'Helvetica-Bold' : 'Helvetica')
+              .fontSize(8.5)
+              .text(parameterName, xName, doc.y, { width: nameWidth, lineGap: 0 });
+            doc.font(abnormal ? 'Helvetica-Bold' : 'Helvetica')
+              .fontSize(8.5)
+              .text(value, resultX, doc.y, { width: 86, align: 'left', lineGap: 0 });
+            doc.font('Helvetica-Bold').fontSize(8.5).text(flag, flagX, doc.y, {
+              width: 45,
+              align: 'center',
+              lineGap: 0,
+            });
+            doc.font('Helvetica-Bold').fontSize(8.5).text(ref, rangeX, doc.y, {
+              width: 105,
+              lineGap: 0,
+            });
+            doc.font('Helvetica-Bold').fontSize(8.5).text(unit, unitX, doc.y, {
+              width: 42,
+              lineGap: 0,
+            });
+            doc.moveDown(0.05);
+
+            if (method && parameterIndex === 0) {
+              doc.font('Helvetica').fontSize(6.2).text(`METHOD : ${method.toUpperCase()}`, xName, doc.y, {
+                width: 230,
+                lineGap: 0,
+              });
+              doc.moveDown(0.05);
+            }
+          });
+
+          const interpretation = test.test?.interpretation || test.test?.remarks;
+          if (interpretation) {
+            ensureSpace(35);
+            doc.font('Helvetica-Bold').fontSize(8).text('Interpretation:', 38, doc.y + 3);
+            doc.font('Helvetica').fontSize(7).text(text(interpretation), 38, doc.y + 13, {
+              width: 519,
+              lineGap: 1,
+            });
+            doc.moveDown(0.35);
+          }
+
+          if (testIndex < tests.length - 1) doc.moveDown(0.25);
         });
 
-        doc.moveDown();
         if (data.order?.clinicalNotes) {
-          doc.font('Helvetica-Bold').fontSize(9).text('Clinical Notes');
-          doc.font('Helvetica').fontSize(8).text(text(data.order.clinicalNotes));
+          ensureSpace(35);
+          doc.font('Helvetica-Bold').fontSize(8).text('Clinical Notes:', 38, doc.y + 3);
+          doc.font('Helvetica').fontSize(7).text(text(data.order.clinicalNotes), 38, doc.y + 13, {
+            width: 519,
+            lineGap: 1,
+          });
         }
-        doc.moveDown();
-        doc.font('Helvetica').fontSize(7).text(
-          `Report ${text(data.reportNumber)} | Generated by the laboratory reporting system | ${date(new Date())}`,
-          { align: 'center' },
-        );
+
+        ensureSpace(78);
+        const signatureY = doc.page.height - 180;
+        doc.font('Helvetica').fontSize(7);
+        doc.text(text(lab.name || 'LABORATORY'), 40, signatureY + 48, {
+          width: 180,
+          align: 'center',
+        });
+        doc.text(text(lab.address || ''), 40, signatureY + 60, {
+          width: 180,
+          align: 'center',
+        });
+        doc.font('Helvetica-Bold').fontSize(8);
+        doc.text(`Dr. ${text(data.finalizedBy?.username || '')}`, 330, signatureY + 48, {
+          width: 190,
+          align: 'center',
+        });
+        doc.font('Helvetica').fontSize(7);
+        doc.text('Consultant Pathologist', 330, signatureY + 62, {
+          width: 190,
+          align: 'center',
+        });
+
+        const range = doc.bufferedPageRange();
+        for (let i = range.start; i < range.start + range.count; i += 1) {
+          doc.switchToPage(i);
+          drawFooter();
+          doc.font('Helvetica').fontSize(7);
+          doc.text(`${i - range.start + 1} / ${range.count}`, 490, doc.page.height - 25, {
+            width: 65,
+            align: 'right',
+          });
+        }
+
         doc.end();
       });
     } catch {
@@ -318,7 +565,12 @@ export class FinalReportsService {
       const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
       const random = Math.random().toString(36).slice(2, 8).toUpperCase();
       const reportNumber = `${labCode}-R-${timestamp}-${random}`;
-      if (!(await this.prisma.finalReport.findUnique({ where: { reportNumber }, select: { id: true } }))) {
+      if (
+        !(await this.prisma.finalReport.findUnique({
+          where: { reportNumber },
+          select: { id: true },
+        }))
+      ) {
         return reportNumber;
       }
     }
