@@ -229,6 +229,36 @@ const panels: CatalogTest[] = [
     s('Salmonella paratyphi BH titre',['Negative','1:20','1:40','1:80','1:160','1:320','>1:320'],{displayOrder:4,referenceRange:{ADULT:'Interpret against local baseline titre and clinical findings.'}}),
     x('Widal interpretation',{displayOrder:5,referenceRange:{ADULT:'No universal positive cut-off; laboratory/pathologist interpretation required.'},remarks:'Do not interpret a single titre in isolation.'})
   ]},
+  { code:'PAN013',shortName:'URINE-RME',name:'Urine Routine Examination',category:'Urinalysis',department:'Clinical Pathology',sampleType:'Midstream Urine',method:'Dipstick + Microscopy',tat:8,parameters:[
+    s('Urine Colour',['Pale Yellow','Yellow','Dark Yellow','Red','Brown','Other']),s('Urine Appearance',['Clear','Slightly Hazy','Cloudy'],{displayOrder:2}),n('Specific Gravity','ratio',1.005,1.030,{displayOrder:3}),n('Urine pH','pH',5,8,{displayOrder:4}),s('Protein',['Negative','Trace','1+','2+','3+','4+'],{displayOrder:5}),s('Glucose',['Negative','Trace','1+','2+','3+','4+'],{displayOrder:6}),s('Ketones',['Negative','Trace','1+','2+','3+'],{displayOrder:7}),s('Blood',['Negative','Trace','1+','2+','3+'],{displayOrder:8}),s('Nitrite',['Negative','Positive'],{displayOrder:9}),s('Leukocyte Esterase',['Negative','Trace','1+','2+','3+'],{displayOrder:10}),n('RBCs','/HPF',0,2,{displayOrder:11}),n('WBCs','/HPF',0,5,{displayOrder:12}),x('Urine microscopy remarks',{displayOrder:13})
+  ]},
+  { code:'PAN014',shortName:'STOOL-RME',name:'Stool Routine Examination',category:'Parasitology',department:'Clinical Pathology',sampleType:'Stool',method:'Macroscopy + Microscopy',tat:8,parameters:[
+    s('Stool Colour',['Brown','Yellow','Green','Black','Clay','Other']),s('Consistency',['Formed','Semi-formed','Loose','Watery','Mucoid'],{displayOrder:2}),s('Occult Blood',['Absent','Present'],{displayOrder:3}),s('Mucus',['Absent','Present'],{displayOrder:4}),s('Ova / Cysts / Parasites',['Not Seen','Seen'],{displayOrder:5}),x('Microscopy findings',{displayOrder:6}),x('Stool interpretation',{displayOrder:7})
+  ]},
+  { code:'PAN015',shortName:'DENGUE-PROFILE',name:'Dengue Profile',category:'Dengue Serology',department:'Serology',sampleType:'Serum',method:'Immunoassay / Rapid Test',tat:8,parameters:[
+    s('Dengue NS1 Antigen',['Negative','Positive','Equivocal']),s('Dengue IgM',['Negative','Positive','Equivocal'],{displayOrder:2}),s('Dengue IgG',['Negative','Positive','Equivocal'],{displayOrder:3}),x('Dengue interpretation',{displayOrder:4,remarks:'Interpret with day of illness and clinical findings.'})
+  ]},
+  { code:'PAN016',shortName:'MALARIA-SM',name:'Malaria Parasite Examination',category:'Malaria',department:'Parasitology',sampleType:'EDTA Whole Blood',method:'Peripheral Smear / Rapid Antigen',tat:8,parameters:[
+    s('Malaria Parasite Result',['Not Detected','Plasmodium falciparum','Plasmodium vivax','Mixed Infection','Other'],{referenceRange:{ADULT:'Not Detected'}}),x('Parasite density / remarks',{displayOrder:2}),s('Gametocytes',['Not Seen','Seen'],{displayOrder:3})
+  ]},
+  { code:'PAN017',shortName:'ANAEMIA',name:'Anaemia Profile',category:'Anaemia Workup',department:'Hematology',sampleType:'Blood / Serum',method:'Hematology Analyzer + Immunoassay',tat:8,parameters:[
+    n('Hemoglobin','g/dL',12,17.5,{referenceRange:{MALE:'13.5-17.5',FEMALE:'12.0-15.5'}}),n('MCV','fL',80,100,{displayOrder:2}),n('RDW-CV','%',11.5,14.5,{displayOrder:3}),n('Reticulocyte Count','%',0.5,2.5,{displayOrder:4}),n('Serum Ferritin','ng/mL',15,300,{displayOrder:5,remarks:'Age/sex-dependent; laboratory interval should be configured.'}),n('Serum Iron','µg/dL',60,170,{displayOrder:6}),n('TIBC','µg/dL',250,450,{displayOrder:7}),n('Vitamin B12','pg/mL',200,900,{displayOrder:8}),n('Folate','ng/mL',3.1,17.5,{displayOrder:9})
+  ]},
+  { code:'PAN018',shortName:'ANTENATAL',name:'Antenatal Screening Profile',category:'Antenatal Screening',department:'Serology',sampleType:'Blood / Urine',method:'Multi-method Screening',tat:24,parameters:[
+    s('ABO Blood Group',['A','B','AB','O']),s('Rh(D) Typing',['Positive','Negative'],{displayOrder:2}),s('HIV 1 & 2 Screening',['Non-Reactive','Reactive','Indeterminate'],{displayOrder:3}),s('HBsAg',['Non-Reactive','Reactive','Indeterminate'],{displayOrder:4}),s('Anti-HCV',['Non-Reactive','Reactive','Indeterminate'],{displayOrder:5}),s('VDRL / RPR',['Non-Reactive','Reactive'],{displayOrder:6}),s('Urine Pregnancy Test',['Negative','Positive'],{displayOrder:7}),x('Antenatal screening remarks',{displayOrder:8})
+  ]},
+  { code:'PAN019',shortName:'PRE-OP',name:'Pre-Operative Screening Profile',category:'Pre-Operative Screening',department:'Laboratory Medicine',sampleType:'Blood / Serum',method:'Multi-method Screening',tat:12,parameters:[
+    n('Hemoglobin','g/dL',12,17.5),n('Total Leukocyte Count','cells/cumm',4000,11000,{displayOrder:2}),n('Platelet Count','lakhs/cumm',1.5,4.5,{displayOrder:3}),n('Prothrombin Time','sec',10,14,{displayOrder:4}),n('INR','ratio',0.8,1.2,{displayOrder:5}),n('Serum Creatinine','mg/dL',0.6,1.3,{displayOrder:6}),n('Fasting Glucose','mg/dL',70,99,{displayOrder:7}),s('HBsAg',['Non-Reactive','Reactive','Indeterminate'],{displayOrder:8}),s('HIV 1 & 2',['Non-Reactive','Reactive','Indeterminate'],{displayOrder:9}),s('Anti-HCV',['Non-Reactive','Reactive','Indeterminate'],{displayOrder:10})
+  ]},
+  { code:'PAN020',shortName:'SEMEN',name:'Semen Analysis',category:'Andrology',department:'Clinical Pathology',sampleType:'Semen',method:'Macroscopy + Microscopy',tat:8,parameters:[
+    n('Volume','mL',1.4,6,{referenceRange:{ADULT:'≥1.4'}}),s('Appearance',['Grey-white','Clear','Yellowish','Other'],{displayOrder:2}),n('pH','',7.2,8,{displayOrder:3}),n('Sperm Concentration','million/mL',16,200,{displayOrder:4}),n('Total Motility','%',42,100,{displayOrder:5}),n('Progressive Motility','%',30,100,{displayOrder:6}),n('Normal Morphology','%',4,100,{displayOrder:7}),n('Leukocytes','million/mL',0,1,{displayOrder:8}),x('Semen analysis remarks',{displayOrder:9})
+  ]},
+  { code:'PAN021',shortName:'VITAMIN',name:'Vitamin D and B12 Profile',category:'Vitamins',department:'Biochemistry',sampleType:'Serum',method:'Chemiluminescent Immunoassay',tat:8,parameters:[
+    n('25-OH Vitamin D','ng/mL',30,100,{referenceRange:{ADULT:'30-100 sufficient; interpret by laboratory policy'}}),n('Vitamin B12','pg/mL',200,900,{displayOrder:2}),x('Vitamin profile interpretation',{displayOrder:3})
+  ]},
+  { code:'PAN022',shortName:'INFLAMMATION',name:'Inflammation Profile',category:'Inflammation',department:'Biochemistry',sampleType:'Blood / Serum',method:'Multi-method',tat:8,parameters:[
+    n('ESR','mm/hr',0,20),n('C-Reactive Protein','mg/L',0,5,{displayOrder:2}),n('High Sensitivity CRP','mg/L',0,3,{displayOrder:3}),n('Procalcitonin','ng/mL',0,0.5,{displayOrder:4,remarks:'Clinical decision thresholds are method and context dependent.'})
+  ]},
 ];
 
 export const MASTER_TESTS: CatalogTest[] = [...baseTests, ...qualitativeTests, ...panels].map((test) => ({
