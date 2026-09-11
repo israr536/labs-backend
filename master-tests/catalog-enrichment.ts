@@ -138,7 +138,7 @@ const profiles: Record<string, ParameterProfile> = {
   'ck-mb': { inputType: 'NUMBER', unit: 'ng/mL', normalMin: 0, normalMax: 5 },
   pco2: { inputType: 'NUMBER', unit: 'mmHg', normalMin: 35, normalMax: 45 },
   po2: { inputType: 'NUMBER', unit: 'mmHg', normalMin: 80, normalMax: 100 },
-  ph: { inputType: 'NUMBER', unit: '', normalMin: 7.35, normalMax: 7.45 },
+  ph: { inputType: 'NUMBER', unit: 'pH', normalMin: 7.35, normalMax: 7.45 },
 };
 
 const qualitativeOptions = ['Negative', 'Positive', 'Equivocal'];
@@ -161,11 +161,19 @@ const cloneParameters = (parameters: CatalogParameter[]): CatalogParameter[] => 
 
 const applyProfile = (parameter: CatalogParameter): CatalogParameter => {
   const profile = findProfile(parameter.name);
-  if (!profile) return { ...parameter, displayOrder: parameter.displayOrder ?? 1, isRequired: parameter.isRequired ?? true };
+  if (!profile) return {
+    ...parameter,
+    unit: parameter.inputType === 'NUMBER' && !parameter.unit ? 'Lab-specific' : parameter.unit,
+    remarks: parameter.inputType === 'NUMBER' && !parameter.unit
+      ? parameter.remarks ?? 'Unit and reference interval must be configured for the laboratory method before clinical use.'
+      : parameter.remarks,
+    displayOrder: parameter.displayOrder ?? 1,
+    isRequired: parameter.isRequired ?? true,
+  };
   return {
     ...parameter,
     inputType: parameter.inputType === 'SELECT' && parameter.options?.length ? parameter.inputType : profile.inputType,
-    unit: parameter.unit ?? profile.unit,
+    unit: parameter.unit?.trim() ? parameter.unit : profile.unit,
     normalMin: parameter.normalMin ?? profile.normalMin,
     normalMax: parameter.normalMax ?? profile.normalMax,
     options: parameter.options?.length ? parameter.options : profile.options,
