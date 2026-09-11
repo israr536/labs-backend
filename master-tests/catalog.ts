@@ -210,6 +210,25 @@ const panels: CatalogTest[] = [
   { code:'PAN010',shortName:'TORCH',name:'TORCH Profile',category:'Prenatal Screening',department:'Serology',sampleType:'Serum',method:'Immunoassay',tat:24,parameters:[
     s('Toxoplasma IgM',['Negative','Positive','Equivocal']),s('Toxoplasma IgG',['Negative','Positive','Equivocal'],{displayOrder:2}),s('Rubella IgM',['Negative','Positive','Equivocal'],{displayOrder:3}),s('Rubella IgG',['Negative','Positive','Equivocal'],{displayOrder:4}),s('CMV IgM',['Negative','Positive','Equivocal'],{displayOrder:5}),s('CMV IgG',['Negative','Positive','Equivocal'],{displayOrder:6})
   ]},
+  { code:'PAN011',shortName:'KFT',name:'Kidney Function Test',category:'Renal Profile',department:'Biochemistry',sampleType:'Serum',method:'Automated Chemistry Analyzer',tat:6,parameters:[
+    n('Blood Urea Nitrogen (BUN)','mg/dL',7,20,{referenceRange:{ADULT:'7-20'},remarks:'Reference interval may vary with age, hydration and laboratory method.'}),
+    n('Serum Creatinine','mg/dL',0.6,1.3,{displayOrder:2,referenceRange:{MALE:'0.74-1.35',FEMALE:'0.59-1.04'},remarks:'Interpret with eGFR and patient context.'}),
+    n('Uric Acid','mg/dL',3.5,7.2,{displayOrder:3,referenceRange:{ADULT:'3.5-7.2'}}),
+    n('eGFR (CKD-EPI)','mL/min/1.73m²',90,200,{displayOrder:4,referenceRange:{ADULT:'≥ 90'},remarks:'Use the validated equation and report as calculated.'}),
+    n('Sodium','mmol/L',135,145,{displayOrder:5}),
+    n('Potassium','mmol/L',3.5,5.1,{displayOrder:6}),
+    n('Chloride','mmol/L',98,107,{displayOrder:7}),
+    n('Bicarbonate (Total CO₂)','mmol/L',22,29,{displayOrder:8}),
+    n('Calcium','mg/dL',8.5,10.5,{displayOrder:9}),
+    n('Phosphorus','mg/dL',2.5,4.5,{displayOrder:10})
+  ]},
+  { code:'PAN012',shortName:'WIDAL',name:'Widal Test',category:'Enteric Fever Serology',department:'Serology',sampleType:'Serum',method:'Slide / Tube Agglutination',tat:8,parameters:[
+    s('Salmonella typhi O (TO) titre',['Negative','1:20','1:40','1:80','1:160','1:320','>1:320'],{referenceRange:{ADULT:'Significant titre is laboratory/population dependent; interpret with baseline titre and clinical findings.'}}),
+    s('Salmonella typhi H (TH) titre',['Negative','1:20','1:40','1:80','1:160','1:320','>1:320'],{displayOrder:2,referenceRange:{ADULT:'Significant titre is laboratory/population dependent; interpret with baseline titre and clinical findings.'}}),
+    s('Salmonella paratyphi AH titre',['Negative','1:20','1:40','1:80','1:160','1:320','>1:320'],{displayOrder:3,referenceRange:{ADULT:'Interpret against local baseline titre and clinical findings.'}}),
+    s('Salmonella paratyphi BH titre',['Negative','1:20','1:40','1:80','1:160','1:320','>1:320'],{displayOrder:4,referenceRange:{ADULT:'Interpret against local baseline titre and clinical findings.'}}),
+    x('Widal interpretation',{displayOrder:5,referenceRange:{ADULT:'No universal positive cut-off; laboratory/pathologist interpretation required.'},remarks:'Do not interpret a single titre in isolation.'})
+  ]},
 ];
 
 export const MASTER_TESTS: CatalogTest[] = [...baseTests, ...qualitativeTests, ...panels].map((test) => ({
@@ -221,4 +240,4 @@ export const MASTER_TESTS: CatalogTest[] = [...baseTests, ...qualitativeTests, .
   })),
 }));
 
-export const MASTER_TEST_CATALOG_VERSION = '2026.09.04';
+export const MASTER_TEST_CATALOG_VERSION = '2026.09.12';
