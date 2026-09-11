@@ -97,22 +97,22 @@ export class ReportTemplateService {
   private renderHeader(doc: any, lab: any, reportNumber: string, template: ReportTemplateId, accent: string) {
     const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
     const top = doc.y;
-    const nameSize = template === 'premium' ? 20 : template === 'minimal' ? 16 : 18;
+    const nameSize = 9;
 
-    doc.font('Helvetica-Bold').fontSize(nameSize).fillColor(accent).text(this.text(lab.name, 'Laboratory'), { continued: false });
-    doc.font('Helvetica').fontSize(8.5).fillColor('#64748b');
-    if (lab.address) doc.text(this.text(lab.address));
+    doc.font('Helvetica-Bold').fontSize(nameSize).fillColor('#111111').text(this.text(lab.name, 'Laboratory'), 300, top, { width: width, align: 'right' });
+    doc.font('Helvetica').fontSize(6).fillColor('#333333');
+    if (lab.address) doc.text(this.text(lab.address), 300, top + 11, { width: width, align: 'right' });
     const contact = [lab.mobile, lab.email].filter(Boolean).join(' · ');
-    if (contact) doc.text(contact);
+    if (contact) doc.text(contact, 300, top + 22, { width: width, align: 'right' });
 
     const barcodeWidth = 116;
     const barcodeX = doc.page.width - doc.page.margins.right - barcodeWidth;
-    const barcodeY = top + 2;
+    const barcodeY = top + 30;
     this.drawCode39(doc, reportNumber, barcodeX, barcodeY, barcodeWidth, 32);
 
-    const lineY = Math.max(doc.y, barcodeY + 47) + 7;
+    const lineY = 78;
     doc.moveTo(doc.page.margins.left, lineY).lineTo(doc.page.width - doc.page.margins.right, lineY)
-      .lineWidth(template === 'premium' ? 2.5 : 1.5).strokeColor(accent).stroke();
+      .lineWidth(0.8).strokeColor('#111111').stroke();
     doc.y = lineY + 10;
   }
 
@@ -129,10 +129,9 @@ export class ReportTemplateService {
     ];
 
     const boxY = doc.y;
-    const boxHeight = template === 'detailed' ? 78 : 70;
-    const fill = template === 'premium' ? '#faf5ff' : template === 'modern' ? '#f0fdfa' : '#f8fafc';
-    doc.roundedRect(doc.page.margins.left, boxY, doc.page.width - doc.page.margins.left - doc.page.margins.right, boxHeight, template === 'minimal' ? 0 : 5)
-      .fillAndStroke(fill, '#dbe3ec');
+    const boxHeight = 82;
+    doc.rect(doc.page.margins.left, boxY, doc.page.width - doc.page.margins.left - doc.page.margins.right, boxHeight)
+      .fillAndStroke('#ffffff', '#111111');
 
     const colWidth = (doc.page.width - doc.page.margins.left - doc.page.margins.right) / 4;
     fields.forEach(([label, value], index) => {
@@ -140,8 +139,8 @@ export class ReportTemplateService {
       const row = Math.floor(index / 4);
       const x = doc.page.margins.left + col * colWidth + 8;
       const y = boxY + 8 + row * 31;
-      doc.font('Helvetica-Bold').fontSize(6.5).fillColor('#64748b').text(label.toUpperCase(), x, y, { width: colWidth - 12 });
-      doc.font('Helvetica-Bold').fontSize(template === 'compact' ? 7.5 : 8).fillColor('#172033').text(this.text(value), x, y + 10, { width: colWidth - 12, ellipsis: true });
+      doc.font('Helvetica').fontSize(6.5).fillColor('#222222').text(label, x, y, { width: colWidth - 12 });
+      doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#111111').text(this.text(value), x + 58, y, { width: colWidth - 70, ellipsis: true });
     });
 
     doc.y = boxY + boxHeight + 11;
@@ -149,16 +148,12 @@ export class ReportTemplateService {
 
   private renderTestHeading(doc: any, test: any, template: ReportTemplateId, accent: string) {
     const y = doc.y;
-    if (template !== 'minimal') {
-      doc.rect(doc.page.margins.left, y, 3, 27).fill(accent);
-    }
-    doc.font('Helvetica').fontSize(6.5).fillColor('#64748b').text('LABORATORY TEST', doc.page.margins.left + 8, y + 2);
-    doc.font('Helvetica-Bold').fontSize(template === 'detailed' ? 13 : 11.5).fillColor('#0f172a')
-      .text(this.text(test.name, 'Laboratory Test'), doc.page.margins.left + 8, y + 11);
+    doc.font('Helvetica-Bold').fontSize(8).fillColor('#111111')
+      .text(this.text(test.name, 'Laboratory Test').toUpperCase(), doc.page.margins.left, y + 4, { width: doc.page.width - doc.page.margins.left - doc.page.margins.right, align: 'center' });
     if (test.category) {
-      doc.font('Helvetica').fontSize(7).fillColor('#64748b').text(this.text(test.category), doc.page.margins.left + 8, y + 25);
+      doc.font('Helvetica').fontSize(7).fillColor('#333333').text(this.text(test.category), doc.page.margins.left, y + 15, { width: doc.page.width - doc.page.margins.left - doc.page.margins.right, align: 'center' });
     }
-    doc.y = y + (test.category ? 39 : 32);
+    doc.y = y + (test.category ? 28 : 22);
   }
 
   private renderResultsTable(doc: any, results: any[], template: ReportTemplateId, accent: string) {
@@ -176,10 +171,10 @@ export class ReportTemplateService {
     let y = doc.y;
 
     const drawHeader = () => {
-      doc.rect(x, y, tableWidth, headerHeight).fill(template === 'compact' || template === 'minimal' ? '#334155' : accent);
+      doc.moveTo(x, y + headerHeight).lineTo(x + tableWidth, y + headerHeight).lineWidth(0.8).strokeColor('#111111').stroke();
       let cx = x;
       columns.forEach((column) => {
-        doc.font('Helvetica-Bold').fontSize(6.5).fillColor('#ffffff').text(column.label, cx + 5, y + 8, { width: column.width - 10, align: column.label === 'Flag' ? 'center' : 'left' });
+        doc.font('Helvetica-Bold').fontSize(6.5).fillColor('#111111').text(column.label === 'Parameter' ? 'TEST DESCRIPTION' : column.label === 'Result' ? 'RESULT ENTRY' : column.label === 'Reference Range' ? 'BIO. REF. RANGE' : column.label.toUpperCase(), cx + 5, y + 8, { width: column.width - 10, align: column.label === 'Flag' ? 'center' : 'left' });
         cx += column.width;
       });
       y += headerHeight;
@@ -193,11 +188,11 @@ export class ReportTemplateService {
         drawHeader();
       }
 
-      if (index % 2 === 1) doc.rect(x, y, tableWidth, rowHeight).fill('#f8fafc');
+      if (index % 2 === 1) doc.rect(x, y, tableWidth, rowHeight).fill('#ffffff');
       doc.moveTo(x, y + rowHeight).lineTo(x + tableWidth, y + rowHeight).lineWidth(0.35).strokeColor('#dbe3ec').stroke();
 
       const flag = String(result.flag || '').toUpperCase();
-      const resultColor = flag === 'HIGH' ? '#b91c1c' : flag === 'LOW' ? '#b45309' : flag === 'NORMAL' ? '#166534' : '#172033';
+      const resultColor = flag === 'HIGH' ? '#a00000' : flag === 'LOW' ? '#a00000' : '#111111';
       const values = [
         this.text(result.name, 'N/A'),
         this.text(result.value, 'N/A'),
