@@ -1,30 +1,36 @@
-import { Body, Controller, Get, Param, Patch, Req, UseGuards } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
+import { AuthGuard } from '../auth/auth.guard';
+import { CurrentUser } from '../auth/current-user.decorator';
+import type { AuthUser } from '../auth/auth.types';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 import { CriticalResultsService } from './critical-results.service';
 
 @Controller('critical-results')
-@UseGuards(AuthGuard('jwt'))
+@UseGuards(AuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN, UserRole.TECHNICIAN, UserRole.PATHOLOGIST)
 export class CriticalResultsController {
   constructor(private readonly service: CriticalResultsService) {}
 
   @Get('pending')
-  listPending(@Req() req: any) {
-    return this.service.listPending(req.user.labId);
+  listPending(@CurrentUser() user: AuthUser) {
+    return this.service.listPending(user.labId);
   }
 
   @Get(':id')
-  getOne(@Req() req: any, @Param('id') id: string) {
-    return this.service.getOne(req.user.labId, id);
+  getOne(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.getOne(user.labId, id);
   }
 
   @Patch(':id/acknowledge')
-  acknowledge(@Req() req: any, @Param('id') id: string, @Body() body: { note?: string }) {
-    return this.service.acknowledge(req.user.labId, id, req.user.id, body?.note);
+  acknowledge(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { note?: string }) {
+    return this.service.acknowledge(user.labId, id, user.id, body?.note);
   }
 
   @Patch(':id/notification-attempt')
   notificationAttempt(
-    @Req() req: any,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() body: {
       method: string;
@@ -35,6 +41,6 @@ export class CriticalResultsController {
       note?: string;
     },
   ) {
-    return this.service.recordNotificationAttempt(req.user.labId, id, req.user.id, body);
+    return this.service.recordNotificationAttempt(user.labId, id, user.id, { ...body, notes: body.note });
   }
 }
