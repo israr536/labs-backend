@@ -1,0 +1,2 @@
+ALTER TABLE "Lab"
+ADD COLUMN "showMethodNames" BOOLEAN NOT NULL DEFAULT true;

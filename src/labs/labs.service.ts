@@ -10,6 +10,7 @@ interface UpdateLabSettingsBody {
   email?: unknown;
   address?: unknown;
   icon?: unknown;
+  showMethodNames?: unknown;
 }
 
 @Injectable()
@@ -38,6 +39,7 @@ export class LabsService {
         email: optionalString(body.email, 'email'),
         address: optionalString(body.address, 'address'),
         icon: optionalString(body.icon, 'icon'),
+        showMethodNames: typeof body.showMethodNames === 'boolean' ? body.showMethodNames : undefined,
       },
       select: this.settingsSelect(),
     });
@@ -58,6 +60,7 @@ export class LabsService {
       email: true,
       address: true,
       icon: true,
+      showMethodNames: true,
       isActive: true,
       subscriptionPlan: true,
       subscriptionStartAt: true,
