@@ -38,7 +38,7 @@ export class LabsService {
         mobile: body.mobile ? requiredString(body.mobile, 'mobile') : undefined,
         email: optionalString(body.email, 'email'),
         address: optionalString(body.address, 'address'),
-        icon: optionalString(body.icon, 'icon'),
+        icon: body.icon === '' ? null : optionalString(body.icon, 'icon'),
         showMethodNames: typeof body.showMethodNames === 'boolean' ? body.showMethodNames : undefined,
       },
       select: this.settingsSelect(),
