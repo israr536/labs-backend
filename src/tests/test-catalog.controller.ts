@@ -55,7 +55,11 @@ export class TestCatalogController {
   @Get(':id')
   findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.service.findOne(user, id); }
 
-  @Roles(UserRole.ADMIN)
+  /**
+   * Any authenticated lab role may materialize one catalog test when it is
+   * selected for a report. This creates only that lab's copy and does not
+   * modify the shared master catalog or any other lab.
+   */
   @Post(':id/enable')
   enable(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: unknown) {
     return this.testsService.cloneFromCatalog(user, id, (body ?? {}) as Record<string, unknown>);
