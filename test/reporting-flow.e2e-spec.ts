@@ -79,8 +79,8 @@ describe('Authentication and reporting flow (e2e)', () => {
       { name: 'Result', inputType: 'NUMBER' as const, unit: 'mg/dL', normalMin: 1, normalMax: 100, displayOrder: 0, isRequired: true },
       { name: 'Comment', inputType: 'TEXT' as const, unit: null, normalMin: null, normalMax: null, displayOrder: 1, isRequired: true },
     ];
-    const firstTest = await prisma.test.create({ data: { labId, code: `E2E-A-${unique.slice(0, 8)}`, name: 'E2E Chemistry Test', category: 'E2E', department: 'CHEMISTRY', sampleType: 'SERUM', isActive: true, parameters: { create: parameterData } } });
-    const secondTest = await prisma.test.create({ data: { labId, code: `E2E-B-${unique.slice(0, 8)}`, name: 'E2E Hematology Test', category: 'E2E', department: 'HEMATOLOGY', sampleType: 'BLOOD', isActive: true, parameters: { create: parameterData } } });
+    const firstTest = await prisma.test.create({ data: { labId, scopeId: labId, code: `E2E-A-${unique.slice(0, 8)}`, name: 'E2E Chemistry Test', category: 'E2E', department: 'CHEMISTRY', sampleType: 'SERUM', isActive: true, parameters: { create: parameterData } } });
+    const secondTest = await prisma.test.create({ data: { labId, scopeId: labId, code: `E2E-B-${unique.slice(0, 8)}`, name: 'E2E Hematology Test', category: 'E2E', department: 'HEMATOLOGY', sampleType: 'BLOOD', isActive: true, parameters: { create: parameterData } } });
     testIds = [firstTest.id, secondTest.id];
   });
 

@@ -4,12 +4,13 @@ import { AuthUser } from '../auth/auth.types';
 import { optionalString, requiredString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionService } from '../labs/subscription.service';
+import { TestsService } from '../tests/tests.service';
 
 interface CreateOrderBody { patientId?: unknown; testIds?: unknown; referredBy?: unknown; clinicalNotes?: unknown }
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService, private readonly subscriptionService: SubscriptionService) {}
+  constructor(private readonly prisma: PrismaService, private readonly subscriptionService: SubscriptionService, private readonly testsService: TestsService) {}
 
   async create(currentUser: AuthUser, body: CreateOrderBody) {
     const patientId = requiredString(body.patientId, 'patientId');
@@ -18,7 +19,7 @@ export class OrdersService {
 
     const [patient, tests] = await Promise.all([
       this.prisma.patient.findFirst({ where: { id: patientId, labId: currentUser.labId } }),
-      this.prisma.test.findMany({ where: { id: { in: testIds }, labId: currentUser.labId, isActive: true }, select: { id: true, price: true } }),
+      this.testsService.resolveForUse(currentUser, testIds),
     ]);
     if (!patient) throw new NotFoundException('Patient not found');
     if (tests.length !== testIds.length) throw new BadRequestException('One or more tests are invalid or inactive');

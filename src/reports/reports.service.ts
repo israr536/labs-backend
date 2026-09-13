@@ -19,6 +19,7 @@ import {
   requiredString,
 } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
+import { TestsService } from '../tests/tests.service';
 import { PdfService } from './pdf.service';
 
 interface ReportBody { patientId?: unknown; testId?: unknown; remarks?: unknown; doctorNotes?: unknown; referredBy?: unknown; sampleCollectedAt?: unknown; results?: unknown; }
@@ -29,16 +30,17 @@ type ValidationRule = { min?: number; max?: number; minLength?: number; maxLengt
 
 @Injectable()
 export class ReportsService {
-  constructor(private readonly prisma: PrismaService, private readonly pdfService: PdfService) {}
+  constructor(private readonly prisma: PrismaService, private readonly pdfService: PdfService, private readonly testsService: TestsService) {}
 
   async create(currentUser: AuthUser, body: ReportBody) {
     const patientId = requiredString(body.patientId, 'patientId');
     const testId = requiredString(body.testId, 'testId');
-    const [lab, patient, test] = await Promise.all([
+    const [lab, patient, resolvedTests] = await Promise.all([
       this.prisma.lab.findUnique({ where: { id: currentUser.labId } }),
       this.prisma.patient.findFirst({ where: { id: patientId, labId: currentUser.labId } }),
-      this.prisma.test.findFirst({ where: { id: testId, labId: currentUser.labId, isActive: true }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } }),
+      this.testsService.resolveForUse(currentUser, [testId]),
     ]);
+    const test = resolvedTests[0];
     if (!lab) throw new NotFoundException('Lab not found');
     if (!patient) throw new NotFoundException('Patient not found');
     if (!test) throw new NotFoundException('Test not found');

@@ -86,7 +86,7 @@ export class SubscriptionService {
     const [users, patients, tests, orders] = await Promise.all([
       db.user.count({ where: { labId, isActive: true } }),
       db.patient.count({ where: { labId } }),
-      db.test.count({ where: { labId } }),
+      db.test.count({ where: { labId, scopeId: labId } }),
       db.labOrder.count({ where: { labId } }),
     ]);
     return { users, patients, tests, orders };

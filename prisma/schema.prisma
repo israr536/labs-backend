@@ -206,6 +206,7 @@ model TestDefinitionParameter {
 model Test {
   id          String   @id @default(uuid())
   labId       String
+  scopeId     String
   catalogId   String?
   code        String
   shortName   String?
@@ -228,10 +229,11 @@ model Test {
   orderItems  OrderItem[]
 
   @@index([labId])
+  @@index([labId, scopeId])
   @@index([labId, catalogId])
   @@index([category])
   @@index([department])
-  @@unique([labId, code])
+  @@unique([labId, scopeId, code])
 }
 
 model TestParameter {

@@ -11,5 +11,6 @@ import { StarterTestsService } from './starter-tests.service';
   imports: [AuthModule, LabsModule],
   controllers: [TestsController, TestCatalogController],
   providers: [TestsService, TestCatalogService, StarterTestsService],
+  exports: [TestsService],
 })
 export class TestsModule {}

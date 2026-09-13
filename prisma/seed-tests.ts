@@ -84,8 +84,8 @@ async function seedLab(labId: string) {
   for (const definition of CATALOG_TESTS) {
     const catalog = await prisma.testDefinition.findUnique({ where: { code: definition.code }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } });
     if (!catalog) throw new Error(`Catalog definition ${definition.code} was not created`);
-    const existing = await prisma.test.findUnique({ where: { labId_code: { labId, code: definition.code } }, include: { parameters: true } });
-    const test = existing ? await prisma.test.update({ where: { id: existing.id }, data: { catalogId: catalog.id, shortName: definition.shortName, name: definition.name, category: definition.category, department: definition.department, sampleType: definition.sampleType, method: definition.method, tat: definition.tat, isActive: true } }) : await prisma.test.create({ data: { labId, catalogId: catalog.id, code: definition.code, shortName: definition.shortName, name: definition.name, category: definition.category, department: definition.department, sampleType: definition.sampleType, method: definition.method, tat: definition.tat, isActive: true } });
+    const existing = await prisma.test.findUnique({ where: { labId_scopeId_code: { labId, scopeId: labId, code: definition.code } }, include: { parameters: true } });
+    const test = existing ? await prisma.test.update({ where: { id: existing.id }, data: { catalogId: catalog.id, shortName: definition.shortName, name: definition.name, category: definition.category, department: definition.department, sampleType: definition.sampleType, method: definition.method, tat: definition.tat, isActive: true } }) : await prisma.test.create({ data: { labId, scopeId: labId, catalogId: catalog.id, code: definition.code, shortName: definition.shortName, name: definition.name, category: definition.category, department: definition.department, sampleType: definition.sampleType, method: definition.method, tat: definition.tat, isActive: true } });
     existing ? updatedTests++ : createdTests++;
     for (const parameter of catalog.parameters) {
       const current = existing?.parameters.find((item) => item.name === parameter.name);
