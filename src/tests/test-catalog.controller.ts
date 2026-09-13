@@ -32,32 +32,23 @@ export class TestCatalogController {
     return this.starterTestsService.provision(user);
   }
 
+  /**
+   * Kept for backwards compatibility with older clients.
+   * The master catalog is now shared and must never be copied in bulk into a lab.
+   * Individual tests are materialized only when a lab configures or first uses them.
+   */
   @Roles(UserRole.ADMIN)
   @Post('enable-all')
   async enableAll(@CurrentUser() user: AuthUser) {
     const catalog = await this.service.findAll(user, {});
-    const results: Array<{ id: string; code: string; name: string; status: 'enabled' | 'already-enabled' }> = [];
-
-    // Process sequentially so subscription limits and per-lab uniqueness remain safe.
-    for (const definition of catalog) {
-      try {
-        await this.testsService.cloneFromCatalog(user, definition.id, {});
-        results.push({ id: definition.id, code: definition.code, name: definition.name, status: 'enabled' });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : '';
-        if (message.toLowerCase().includes('already exists')) {
-          results.push({ id: definition.id, code: definition.code, name: definition.name, status: 'already-enabled' });
-          continue;
-        }
-        throw error;
-      }
-    }
-
+    const configured = await this.testsService.findAll(user, 'true');
+    const configuredCodes = new Set(configured.map((test) => test.code));
     return {
       total: catalog.length,
-      enabled: results.filter((item) => item.status === 'enabled').length,
-      alreadyEnabled: results.filter((item) => item.status === 'already-enabled').length,
-      results,
+      enabled: 0,
+      alreadyEnabled: catalog.filter((definition) => configuredCodes.has(definition.code)).length,
+      available: catalog.length,
+      message: 'All master catalog tests are already available. Tests are materialized individually when configured or first used.',
     };
   }
 
