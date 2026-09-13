@@ -115,73 +115,17 @@ export class AuthService {
     ]);
     if (existingLab) throw new ConflictException('Lab code already exists');
     if (existingUser) throw new ConflictException('Email already exists');
+
     const result = await this.prisma.$transaction(async (tx) => {
       const trialStart = new Date();
       const trialEnd = new Date(trialStart.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
       const lab = await tx.lab.create({ data: { code: pending.code, name: pending.name, mobile: pending.mobile, email: pending.email, address: pending.address, subscriptionPlan: 'TRIAL', subscriptionStartAt: trialStart, subscriptionEndAt: trialEnd } });
       const user = await tx.user.create({ data: { labId: lab.id, username: pending.adminEmail ?? pending.adminUsername, mobile: pending.adminMobile, email: pending.adminEmail ?? pending.adminUsername, password: pending.adminPasswordHash, role: UserRole.ADMIN } });
-
-      // Every new trial lab gets the complete active master catalog immediately.
-      // Tests are copied into the lab so the admin can use/configure them during the trial.
-      const definitions = await tx.testDefinition.findMany({
-        where: { isActive: true },
-        include: { parameters: { orderBy: { displayOrder: 'asc' } } },
-        orderBy: { code: 'asc' },
-      });
-
-      if (definitions.length) {
-        await tx.test.createMany({
-          data: definitions.map((definition) => ({
-            labId: lab.id,
-            catalogId: definition.id,
-            code: definition.code,
-            shortName: definition.shortName,
-            name: definition.name,
-            category: definition.category,
-            department: definition.department,
-            sampleType: definition.specimenType,
-            price: null,
-            tat: definition.tat,
-            method: definition.method,
-            isActive: true,
-          })),
-        });
-
-        const tests = await tx.test.findMany({
-          where: { labId: lab.id },
-          select: { id: true, catalogId: true },
-        });
-        const testIdByCatalogId = new Map(tests.map((test) => [test.catalogId, test.id]));
-        const parameters = definitions.flatMap((definition) => {
-          const testId = testIdByCatalogId.get(definition.id);
-          if (!testId) return [];
-          return definition.parameters.map((parameter) => ({
-            testId,
-            name: parameter.name,
-            inputType: parameter.inputType,
-            unit: parameter.unit,
-            normalMin: parameter.normalMin,
-            normalMax: parameter.normalMax,
-            referenceRange: parameter.referenceRange ?? undefined,
-            options: parameter.options ?? undefined,
-            validation: parameter.validation ?? undefined,
-            criticalLow: parameter.criticalLow,
-            criticalHigh: parameter.criticalHigh,
-            decimalPlaces: parameter.decimalPlaces,
-            defaultValue: parameter.defaultValue,
-            formula: parameter.formula,
-            displayOrder: parameter.displayOrder,
-            isRequired: parameter.isRequired,
-            remarks: parameter.remarks,
-          }));
-        });
-        if (parameters.length) await tx.testParameter.createMany({ data: parameters });
-      }
-
       await tx.pendingLabRegistration.delete({ where: { id: pending.id } });
-      return { lab, user, enabledTestCount: definitions.length };
+      return { lab, user };
     });
-    return { success: true, lab: result.lab, user: this.safeUser(result.user), enabledTestCount: result.enabledTestCount, message: `Signup completed. Your ${TRIAL_DAYS}-day trial is active with ${result.enabledTestCount} tests enabled. Please sign in with your new account.` };
+
+    return { success: true, lab: result.lab, user: this.safeUser(result.user), enabledTestCount: 0, message: `Signup completed. Your ${TRIAL_DAYS}-day trial is active with 0 tests enabled. Please sign in and use Enable All Tests to activate the laboratory test catalog.` };
   }
 
   async login(body: LoginBody) {
