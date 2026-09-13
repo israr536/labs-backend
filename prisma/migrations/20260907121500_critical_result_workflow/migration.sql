@@ -4,7 +4,7 @@ CREATE TYPE "CriticalNotificationMethod" AS ENUM ('PHONE', 'IN_PERSON', 'ELECTRO
 CREATE TABLE "CriticalResult" (
   "id" TEXT NOT NULL DEFAULT gen_random_uuid()::text,
   "labId" TEXT NOT NULL,
-  "orderResultId" TEXT NOT NULL,
+  "orderResultId" UUID NOT NULL,
   "patientId" TEXT NOT NULL,
   "testId" TEXT NOT NULL,
   "parameterId" TEXT NOT NULL,
