@@ -5,7 +5,8 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/auth.types';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
-import { CompleteReportBody, OrdersService } from './orders.service';
+import { OrdersService } from './orders.service';
+import type { CompleteReportBody } from './orders.service';
 
 @UseGuards(AuthGuard, RolesGuard)
 @Controller('orders')
