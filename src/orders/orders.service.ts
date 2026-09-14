@@ -88,7 +88,7 @@ export class OrdersService {
     const mobile = typeof payload.mobile === 'string' ? payload.mobile.trim() : '';
     const search = mobile || name;
     if (search) {
-      const existing = await this.patientsService.findAll(currentUser, search).catch(() => []);
+      const existing = await this.patientsService.findAll(currentUser, search);
       const match = existing.find((candidate) => candidate.mobile === mobile && candidate.name?.toLowerCase() === name.toLowerCase());
       if (match) return this.patientsService.update(currentUser, match.id, payload);
     }
