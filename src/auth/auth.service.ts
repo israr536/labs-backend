@@ -188,7 +188,7 @@ export class AuthService {
   }
 
   private getRefreshTokenDays(): number {
-    const refreshTokenDays = Number(process.env.REFRESH_TOKEN_DAYS ?? 30);
+    const refreshTokenDays = Number(process.env.REFRESH_TOKEN_DAYS ?? 365);
     if (!Number.isInteger(refreshTokenDays) || refreshTokenDays < 1 || refreshTokenDays > 365) throw new Error('REFRESH_TOKEN_DAYS must be an integer between 1 and 365');
     return refreshTokenDays;
   }
