@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { OrderStatus } from '@prisma/client';
+import { OrderStatus, Prisma } from '@prisma/client';
 import type { AuthUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -9,11 +9,18 @@ export class DashboardService {
 
   async summary(currentUser: AuthUser) {
     const labId = currentUser.labId;
-    const [totalPatients, totalReports, completedReports, pendingReports] = await Promise.all([
+    const [totalPatients, totalReports, completedReports, pendingReports, criticalRows] = await Promise.all([
       this.prisma.patient.count({ where: { labId } }),
       this.prisma.labOrder.count({ where: { labId } }),
       this.prisma.labOrder.count({ where: { labId, status: OrderStatus.FINAL } }),
       this.prisma.labOrder.count({ where: { labId, status: { notIn: [OrderStatus.FINAL, OrderStatus.CANCELLED] } } }),
+      this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+        SELECT COUNT(*)::bigint AS count
+        FROM "CriticalResult"
+        WHERE "labId" = ${labId}::uuid
+          AND "isCurrent" = true
+          AND "status" IN ('PENDING', 'NOTIFIED')
+      `),
     ]);
 
     return {
@@ -21,7 +28,7 @@ export class DashboardService {
       totalReports,
       completedReports,
       pendingReports,
-      criticalReports: 0,
+      criticalReports: Number(criticalRows[0]?.count ?? 0),
     };
   }
 }
