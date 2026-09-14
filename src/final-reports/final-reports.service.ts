@@ -118,12 +118,12 @@ export class FinalReportsService {
     // We already have the immutable snapshot and created report row. Avoid an
     // immediate second DB read of the same final report just to return it.
     return {
+      ...snapshot,
       id: report.id,
       reportNumber: report.reportNumber,
       version: report.currentVersion,
       finalizedAt: report.finalizedAt,
       finalizedBy: { id: currentUser.id, username: (currentUser as any).username, role: currentUser.role },
-      ...snapshot,
     };
   }
 
@@ -528,7 +528,9 @@ export class FinalReportsService {
         samples: order.samples,
         tests: order.items.map((item: any) => {
           // One Map lookup per parameter instead of scanning every result array.
-          const resultByParameterId = new Map(item.results.map((row: any) => [row.parameterId, row]));
+          const resultByParameterId = new Map<string, any>(
+            item.results.map((row: any) => [row.parameterId, row]),
+          );
           return {
             orderItemId: item.id,
             test: {
