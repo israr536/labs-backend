@@ -70,8 +70,14 @@ export class TestsService {
           include: { parameters: { orderBy: { displayOrder: 'asc' } }, catalog: true },
         })
       : [];
-    const overrideByCatalog = new Map(overrides.filter((row) => row.catalogId).map((row) => [row.catalogId as string, row]));
-    const overrideByCode = new Map(overrides.map((row) => [row.code.toLowerCase(), row]));
+    const userOverrides = overrides.filter((row) => row.scopeId === currentUser.id);
+    const labOverrides = overrides.filter((row) => row.scopeId === currentUser.labId);
+    const overrideByCatalog = new Map<string, any>();
+    const overrideByCode = new Map<string, any>();
+    for (const row of [...labOverrides, ...userOverrides]) {
+      if (row.catalogId) overrideByCatalog.set(row.catalogId, row);
+      overrideByCode.set(row.code.toLowerCase(), row);
+    }
 
     const resolvedMissing = await Promise.all(missingIds.map(async (id) => {
       const definition = definitionById.get(id);
