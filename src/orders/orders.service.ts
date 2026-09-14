@@ -46,6 +46,7 @@ export class OrdersService {
   }
 
   async createCompleteReport(currentUser: AuthUser, body: CompleteReportBody) {
+    const startedAt = Date.now();
     const requestedStatus = typeof body.status === 'string' ? body.status.trim() : '';
     const shouldFinalize = requestedStatus === 'Completed' || requestedStatus === 'Critical';
     if (shouldFinalize && currentUser.role !== 'ADMIN' && currentUser.role !== 'TECHNICIAN') throw new BadRequestException('Only an administrator or technician can complete and finalize a report');
@@ -53,8 +54,13 @@ export class OrdersService {
     const testIds = this.normalizeTestIds(body.testIds);
     if (!testIds.length) throw new BadRequestException('Please select at least one configured laboratory test.');
     const order = await this.createFastCompleteOrder(currentUser, { patientId: patient.id, testIds, referredBy: body.referredBy, clinicalNotes: body.clinicalNotes });
+    console.info(`[PERF] complete:create-order ${Date.now() - startedAt}ms`);
     const samples = await this.samplesService.createCompletedForOrder(currentUser, order.id, {});
-    const orderWithParameters = await this.findOne(currentUser, order.id);
+    console.info(`[PERF] complete:create-samples ${Date.now() - startedAt}ms`);
+    // createFastCompleteOrder already returns the selected tests and their materialized parameters.
+    // Re-querying the entire order here was adding another large DB round-trip for every report.
+    const orderWithParameters = order;
+    console.info(`[PERF] complete:load-parameters ${Date.now() - startedAt}ms (reused create-order payload)`);
     const resultInputs: Array<{ parameterId: string; value: string; sampleId?: string }> = [];
     const itemsByTestKey = new Map<string, any>();
     for (const item of orderWithParameters.items as any[]) for (const key of [item.test?.id, item.test?.catalogId, item.test?.code]) if (typeof key === 'string' && key.trim()) itemsByTestKey.set(key.trim().toLowerCase(), item);
@@ -70,11 +76,17 @@ export class OrdersService {
         if (parameter && value) resultInputs.push({ parameterId: parameter.id, value, sampleId: samplesBySpecimen.get(item.test.sampleType) ?? samples[0]?.id });
       }
     }
-    if (resultInputs.length) await this.resultsService.save(currentUser, order.id, { results: resultInputs });
+    if (resultInputs.length) {
+      await this.resultsService.save(currentUser, order.id, { results: resultInputs }, { reload: false });
+      console.info(`[PERF] complete:save-results ${Date.now() - startedAt}ms`);
+    }
     if (shouldFinalize) {
       if (!resultInputs.length) throw new BadRequestException('No report results were provided. Enter at least one result before completing the report.');
-      await this.resultsService.verify(currentUser, order.id);
-      return this.finalReportsService.finalize(currentUser, order.id);
+      await this.resultsService.verify(currentUser, order.id, { reload: false });
+      console.info(`[PERF] complete:verify ${Date.now() - startedAt}ms`);
+      const finalized = await this.finalReportsService.finalize(currentUser, order.id);
+      console.info(`[PERF] complete:finalize ${Date.now() - startedAt}ms`);
+      return finalized;
     }
     return this.resultsService.findOne(currentUser, order.id);
   }
@@ -95,7 +107,7 @@ export class OrdersService {
       await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
       await this.subscriptionService.assertCanCreateOrder(currentUser.labId, tx);
       const orderNumber = await this.createOrderNumber(tx, currentUser.labId, lab.code);
-      return tx.labOrder.create({ data: { labId: currentUser.labId, patientId, orderNumber, status: OrderStatus.REGISTERED, referredBy: optionalString(body.referredBy, 'referredBy'), clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'), createdById: currentUser.id, items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) } }, include: { patient: true, items: { include: { test: true } }, samples: true } });
+      return tx.labOrder.create({ data: { labId: currentUser.labId, patientId, orderNumber, status: OrderStatus.REGISTERED, referredBy: optionalString(body.referredBy, 'referredBy'), clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'), createdById: currentUser.id, items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) } }, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } } } }, samples: true });
     }, { timeout: 10000 });
   }
 
