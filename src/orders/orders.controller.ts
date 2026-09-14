@@ -5,7 +5,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/auth.types';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
-import { OrdersService } from './orders.service';
+import { CompleteReportBody, OrdersService } from './orders.service';
 
 @UseGuards(AuthGuard, RolesGuard)
 @Controller('orders')
@@ -21,7 +21,7 @@ export class OrdersController {
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN)
   @Post('complete')
   createCompleteReport(@CurrentUser() user: AuthUser, @Body() body: unknown) {
-    return this.ordersService.createCompleteReport(user, (body ?? {}) as Record<string, unknown>);
+    return this.ordersService.createCompleteReport(user, (body ?? {}) as CompleteReportBody);
   }
 
   @Get()
