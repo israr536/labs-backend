@@ -41,7 +41,7 @@ export class OrdersService {
       await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
       await this.subscriptionService.assertWithinLimit(currentUser.labId, 'orders', 1, tx);
       const orderNumber = await this.createOrderNumber(tx, currentUser.labId, lab.code);
-      return tx.labOrder.create({ data: { labId: currentUser.labId, patientId, orderNumber, status: OrderStatus.REGISTERED, referredBy: optionalString(body.referredBy, 'referredBy'), clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'), createdById: currentUser.id, items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) } }, include: { patient: true, items: { include: { test: true } }, samples: true } });
+      return tx.labOrder.create({ data: { labId: currentUser.labId, patientId, orderNumber, status: OrderStatus.REGISTERED, referredBy: optionalString(body.referredBy, 'referredBy'), clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'), createdById: currentUser.id, items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) } }, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } } } }, samples: true } });
     });
   }
 
@@ -61,35 +61,24 @@ export class OrdersService {
       clinicalNotes: body.clinicalNotes,
     });
     const samples = await this.samplesService.createCompletedForOrder(currentUser, order.id, {});
-
-    // OrdersService.findOne returns the full test parameter definitions. ResultsService.findOne
-    // intentionally returns a lightweight DTO, so using it here would hide parameters and
-    // produce an empty resultInputs array before verification.
     const orderWithParameters = await this.findOne(currentUser, order.id);
     const resultInputs: Array<{ parameterId: string; value: string; sampleId?: string }> = [];
-    for (const [testId, parameters] of Object.entries(body.parametersByTest ?? {})) {
-      const normalizedTestId = testId.trim().toLowerCase();
-      const item = (orderWithParameters.items as any[]).find((candidate) => {
-        const test = candidate.test;
-        return (
-          test?.id?.trim().toLowerCase() === normalizedTestId ||
-          test?.catalogId?.trim().toLowerCase() === normalizedTestId ||
-          test?.code?.trim().toLowerCase() === normalizedTestId
-        );
-      });
-
-      if (!item) {
-        throw new BadRequestException(
-          `Unable to map report results to selected test: ${testId}`
-        );
+    const itemsByTestKey = new Map<string, any>();
+    for (const item of orderWithParameters.items as any[]) {
+      for (const key of [item.test?.id, item.test?.catalogId, item.test?.code]) {
+        if (typeof key === 'string' && key.trim()) itemsByTestKey.set(key.trim().toLowerCase(), item);
       }
-
+    }
+    const samplesBySpecimen = new Map(samples.map((sample) => [sample.specimenType, sample.id]));
+    for (const [testId, parameters] of Object.entries(body.parametersByTest ?? {})) {
+      const item = itemsByTestKey.get(testId.trim().toLowerCase());
+      if (!item) throw new BadRequestException(`Unable to map report results to selected test: ${testId}`);
       const byName = new Map((item.test.parameters ?? []).map((parameter: any) => [parameter.name.trim().toLowerCase(), parameter]));
       for (const input of parameters ?? []) {
         const name = typeof input?.name === 'string' ? input.name.trim().toLowerCase() : '';
         const parameter = byName.get(name) as any;
         const value = input?.value === undefined || input?.value === null ? '' : String(input.value).trim();
-        if (parameter && value) resultInputs.push({ parameterId: parameter.id, value, sampleId: samples.find((sample) => sample.specimenType === item.test.sampleType)?.id ?? samples[0]?.id });
+        if (parameter && value) resultInputs.push({ parameterId: parameter.id, value, sampleId: samplesBySpecimen.get(item.test.sampleType) ?? samples[0]?.id });
       }
     }
     if (resultInputs.length) await this.resultsService.save(currentUser, order.id, { results: resultInputs });
@@ -154,18 +143,42 @@ export class OrdersService {
 
   async findOne(currentUser: AuthUser, id: string) {
     const items = await this.prisma.orderItem.findMany({ where: { orderId: id, order: { labId: currentUser.labId } }, select: { testId: true, test: { select: { id: true, code: true, name: true, catalogId: true, parameters: true } } } });
-    for (const item of items) {
+    if (!items.length) {
+      const exists = await this.prisma.labOrder.findFirst({ where: { id, labId: currentUser.labId }, select: { id: true } });
+      if (!exists) throw new NotFoundException('Order not found');
+    }
+
+    const catalogIds = [...new Set(items.map((item) => item.test.catalogId).filter((value): value is string => Boolean(value)))];
+    const codes = [...new Set(items.map((item) => item.test.code).filter((value): value is string => Boolean(value)))];
+    const definitions = catalogIds.length || codes.length
+      ? await this.prisma.testDefinition.findMany({
+          where: { isActive: true, OR: [
+            ...(catalogIds.length ? [{ id: { in: catalogIds } }] : []),
+            ...(codes.length ? [{ code: { in: codes } }] : []),
+          ] },
+          include: { parameters: { orderBy: { displayOrder: 'asc' } } },
+        })
+      : [];
+    const definitionById = new Map(definitions.map((definition) => [definition.id, definition]));
+    const definitionByCode = new Map(definitions.map((definition) => [definition.code, definition]));
+    const materialize = items.map((item) => {
       const test = item.test;
-      const definition = test.catalogId ? await this.prisma.testDefinition.findFirst({ where: { id: test.catalogId, isActive: true }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } }) : await this.prisma.testDefinition.findFirst({ where: { code: test.code, isActive: true }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } });
-      if (!definition || !definition.parameters.length) continue;
+      const definition = (test.catalogId ? definitionById.get(test.catalogId) : undefined) ?? definitionByCode.get(test.code);
+      if (!definition || !definition.parameters.length) return null;
       const existingNames = new Set(test.parameters.map((parameter) => parameter.name.trim().toLowerCase()));
       const missing = definition.parameters.filter((parameter) => !existingNames.has(parameter.name.trim().toLowerCase()));
-      if (!missing.length) { if (!test.catalogId) await this.prisma.test.update({ where: { id: test.id }, data: { catalogId: definition.id } }); continue; }
+      return { test, definition, missing };
+    }).filter((value): value is { test: (typeof items)[number]['test']; definition: (typeof definitions)[number]; missing: (typeof definitions)[number]['parameters'] } => Boolean(value && value.missing.length));
+
+    if (materialize.length) {
       await this.prisma.$transaction(async (tx) => {
-        await tx.testParameter.createMany({ data: missing.map((parameter, index) => ({ testId: test.id, name: parameter.name, inputType: parameter.inputType, unit: parameter.unit ?? null, normalMin: parameter.normalMin ?? null, normalMax: parameter.normalMax ?? null, referenceRange: parameter.referenceRange ?? undefined, options: parameter.options ?? undefined, validation: parameter.validation ?? undefined, criticalLow: parameter.criticalLow ?? null, criticalHigh: parameter.criticalHigh ?? null, decimalPlaces: parameter.decimalPlaces ?? null, defaultValue: parameter.defaultValue ?? null, formula: parameter.formula ?? null, displayOrder: parameter.displayOrder ?? (test.parameters.length + index), isRequired: parameter.isRequired ?? true, remarks: parameter.remarks ?? null })), skipDuplicates: true });
-        if (!test.catalogId) await tx.test.update({ where: { id: test.id }, data: { catalogId: definition.id } });
+        for (const { test, definition, missing } of materialize) {
+          await tx.testParameter.createMany({ data: missing.map((parameter, index) => ({ testId: test.id, name: parameter.name, inputType: parameter.inputType, unit: parameter.unit ?? null, normalMin: parameter.normalMin ?? null, normalMax: parameter.normalMax ?? null, referenceRange: parameter.referenceRange ?? undefined, options: parameter.options ?? undefined, validation: parameter.validation ?? undefined, criticalLow: parameter.criticalLow ?? null, criticalHigh: parameter.criticalHigh ?? null, decimalPlaces: parameter.decimalPlaces ?? null, defaultValue: parameter.defaultValue ?? null, formula: parameter.formula ?? null, displayOrder: parameter.displayOrder ?? (test.parameters.length + index), isRequired: parameter.isRequired ?? true, remarks: parameter.remarks ?? null })), skipDuplicates: true });
+          if (!test.catalogId) await tx.test.update({ where: { id: test.id }, data: { catalogId: definition.id } });
+        }
       });
     }
+
     const order = await this.prisma.labOrder.findFirst({ where: { id, labId: currentUser.labId }, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } }, results: true } }, samples: true, createdBy: { select: { id: true, username: true, role: true } } } });
     if (!order) throw new NotFoundException('Order not found');
     return { ...order, results: order.items.flatMap((item) => item.results) };
