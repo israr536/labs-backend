@@ -59,11 +59,7 @@ export class SamplesService {
     });
   }
 
-  /**
-   * Fast path for the single-screen report workflow. A report that is entered
-   * and completed immediately does not need four separate status transitions.
-   * The normal sample APIs above keep their existing lifecycle semantics.
-   */
+  /** Fast path for the single-screen report workflow. Normal sample APIs retain their existing lifecycle semantics. */
   async createCompletedForOrder(currentUser: AuthUser, orderId: string, body: CreateSamplesBody = {}) {
     const order = await this.prisma.labOrder.findFirst({
       where: { id: orderId, labId: currentUser.labId },
@@ -105,6 +101,7 @@ export class SamplesService {
           },
         }));
       }
+      await tx.labOrder.update({ where: { id: order.id }, data: { status: OrderStatus.SAMPLE_COLLECTED } });
       return samples;
     });
   }
