@@ -47,17 +47,12 @@ export class TestsService {
    * point they are actually used.
    */
   async resolveForUse(currentUser: AuthUser, ids: string[]) {
-    const resolved: any[] = [];
-    for (const id of ids) {
+    return Promise.all(ids.map(async (id) => {
       const actual = await this.findActual(currentUser, id);
-      if (actual) {
-        resolved.push(actual);
-        continue;
-      }
+      if (actual) return actual;
       const effective = await this.findOne(currentUser, id);
-      resolved.push(await this.materializeForUser(currentUser, effective));
-    }
-    return resolved;
+      return this.materializeForUser(currentUser, effective);
+    }));
   }
 
   async cloneFromCatalog(currentUser: AuthUser, catalogId: string, overrides: TestBody = {}) {
