@@ -4,7 +4,7 @@ import { AuditService } from '../audit/audit.service';
 import { AuthUser } from '../auth/auth.types';
 import { arrayValue, requiredString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
-import { ReferenceRangesService } from '../reference-ranges/reference-ranges.service';
+import { ReferenceRangesService, ResolvedReferenceRange } from '../reference-ranges/reference-ranges.service';
 
 interface ResultInput { parameterId?: unknown; value?: unknown; sampleId?: unknown; analyzer?: unknown; }
 interface ResultsBody { results?: unknown; }
@@ -27,6 +27,8 @@ export class ResultsService {
 
     const items = order.items.flatMap((item) => item.test.parameters.map((parameter) => ({ item, parameter })));
     const byParameter = new Map(items.map(({ parameter, item }) => [parameter.id, { parameter, item }]));
+    const samplesById = new Map(order.samples.map((sample) => [sample.id, sample]));
+    const existingByParameter = new Map(order.items.flatMap((item) => item.results.map((result) => [result.parameterId, result] as const)));
     const seen = new Set<string>();
     const changedParameterIds: string[] = [];
     const createdParameterIds: string[] = [];
@@ -41,7 +43,7 @@ export class ResultsService {
       const rawValue = input.value === undefined || input.value === null ? '' : String(input.value).trim();
       if (!rawValue && target.parameter.isRequired) throw new BadRequestException(`results.${index}.value is required`);
 
-      const existing = target.item.results.find((row) => row.parameterId === parameterId);
+      const existing = existingByParameter.get(parameterId);
       if (existing?.verifiedAt) {
         throw new BadRequestException(`Result for ${target.parameter.name} has already been verified and cannot be changed`);
       }
@@ -51,13 +53,13 @@ export class ResultsService {
       const value = rawValue ? this.validateValue(target.parameter, rawValue, index) : '';
       const sampleId = input.sampleId === undefined ? undefined : requiredString(input.sampleId, `results.${index}.sampleId`);
       if (sampleId) {
-        const sample = order.samples.find((item) => item.id === sampleId);
+        const sample = samplesById.get(sampleId);
         if (!sample) throw new BadRequestException('sampleId does not belong to this order');
         if (sample.status !== 'PROCESSING' && sample.status !== 'COMPLETED') throw new BadRequestException('Results can only be linked to a processing or completed sample');
       }
 
       const analyzer = input.analyzer === undefined ? null : requiredString(input.analyzer, `results.${index}.analyzer`);
-      const range = value ? await this.referenceRanges.resolve(currentUser, parameterId, order.patient, target.item.test.method, analyzer) : null;
+      const range = value ? await this.resolveReferenceRange(parameterId, order.patient, target.item.test.method, analyzer) : null;
       return {
         orderItemId: target.item.id,
         parameterId,
@@ -89,15 +91,25 @@ export class ResultsService {
       for (const result of normalized) {
         await tx.orderResult.upsert({
           where: { orderItemId_parameterId: { orderItemId: result.orderItemId, parameterId: result.parameterId } },
-          create: { orderItemId: result.orderItemId, parameterId: result.parameterId, sampleId: result.sampleId, value: result.value, flag: result.flag },
-          update: { value: result.value, flag: result.flag, sampleId: result.sampleId, verifiedAt: null, verifiedById: null },
+          create: {
+            orderItemId: result.orderItemId,
+            parameterId: result.parameterId,
+            sampleId: result.sampleId,
+            value: result.value,
+            flag: result.flag,
+            referenceRangeId: result.referenceRangeId,
+            referenceRangeSnapshot: result.referenceRangeSnapshot,
+          },
+          update: {
+            value: result.value,
+            flag: result.flag,
+            sampleId: result.sampleId,
+            verifiedAt: null,
+            verifiedById: null,
+            referenceRangeId: result.referenceRangeId,
+            referenceRangeSnapshot: result.referenceRangeSnapshot,
+          },
         });
-        await tx.$executeRaw(Prisma.sql`
-          UPDATE "OrderResult"
-          SET "referenceRangeId" = ${result.referenceRangeId},
-              "referenceRangeSnapshot" = ${result.referenceRangeSnapshot ? JSON.stringify(result.referenceRangeSnapshot) : null}::jsonb
-          WHERE "orderItemId" = ${result.orderItemId} AND "parameterId" = ${result.parameterId}
-        `);
       }
       await tx.labOrder.update({ where: { id: order.id }, data: { status: OrderStatus.RESULT_ENTERED } });
       await tx.auditLog.create({
@@ -123,8 +135,7 @@ export class ResultsService {
 
   async findOne(currentUser: AuthUser, orderId: string) {
     const order = await this.getOrder(currentUser, orderId);
-    const referenceSnapshots = await this.getReferenceSnapshots(order.items.flatMap((item) => item.results.map((result) => result.id)));
-    return { id: order.id, orderNumber: order.orderNumber, status: order.status, revision: order.revision, patient: order.patient, samples: order.samples, items: order.items.map((item) => ({ id: item.id, test: { id: item.test.id, code: item.test.code, name: item.test.name }, results: item.results.map((result) => ({ ...result, referenceRangeSnapshot: referenceSnapshots.get(result.id) ?? null })) })) };
+    return { id: order.id, orderNumber: order.orderNumber, status: order.status, revision: order.revision, patient: order.patient, samples: order.samples, items: order.items.map((item) => ({ id: item.id, test: { id: item.test.id, code: item.test.code, name: item.test.name }, results: item.results.map((result) => ({ ...result, referenceRangeSnapshot: result.referenceRangeSnapshot ?? null })) })) };
   }
 
   async verify(currentUser: AuthUser, orderId: string) {
@@ -132,12 +143,15 @@ export class ResultsService {
     if (order.status !== OrderStatus.RESULT_ENTERED) throw new BadRequestException('Only orders with entered results can be verified');
     const missing: string[] = [];
     const resultIds: string[] = [];
-    for (const item of order.items) for (const parameter of item.test.parameters) {
-      const result = item.results.find((row) => row.parameterId === parameter.id);
-      if (parameter.isRequired && (!result || !result.value.trim())) missing.push(`${item.test.name}: ${parameter.name}`);
-      if (result) {
-        if (result.verifiedAt) throw new BadRequestException(`Result for ${parameter.name} has already been verified`);
-        resultIds.push(result.id);
+    for (const item of order.items) {
+      const resultsByParameter = new Map(item.results.map((row) => [row.parameterId, row]));
+      for (const parameter of item.test.parameters) {
+        const result = resultsByParameter.get(parameter.id);
+        if (parameter.isRequired && (!result || !result.value.trim())) missing.push(`${item.test.name}: ${parameter.name}`);
+        if (result) {
+          if (result.verifiedAt) throw new BadRequestException(`Result for ${parameter.name} has already been verified`);
+          resultIds.push(result.id);
+        }
       }
     }
     if (missing.length) throw new BadRequestException(`Missing required results: ${missing.join(', ')}`);
@@ -148,7 +162,7 @@ export class ResultsService {
       const locked = await tx.labOrder.updateMany({ where: { id: order.id, labId: currentUser.labId, revision: order.revision, status: OrderStatus.RESULT_ENTERED }, data: { status: OrderStatus.VERIFIED, revision: { increment: 1 } } });
       if (locked.count !== 1) throw new ConflictException('This order changed while you were verifying it. Reload the order and try again.');
       const verified = await tx.orderResult.updateMany({ where: { id: { in: resultIds }, verifiedAt: null }, data: { verifiedAt, verifiedById: currentUser.id } });
-      if (verified.count !== resultIds.length) throw new ConflictException('One or more results changed while verification was in progress. Reload the order and try again.');
+      if (verified.count !== resultIds.length) throw new ConflictException('One or more results changed while verification is in progress. Reload the order and try again.');
       await tx.auditLog.create({
         data: {
           labId: currentUser.labId,
@@ -163,14 +177,30 @@ export class ResultsService {
     return this.findOne(currentUser, orderId);
   }
 
-  private async getReferenceSnapshots(resultIds: string[]) {
-    if (!resultIds.length) return new Map<string, unknown>();
-    const rows = await this.prisma.$queryRaw<Array<{ id: string; referenceRangeSnapshot: unknown }>>(Prisma.sql`
-      SELECT "id", "referenceRangeSnapshot"
-      FROM "OrderResult"
-      WHERE "id" IN (${Prisma.join(resultIds.map((id) => Prisma.sql`${id}`))})
-    `);
-    return new Map(rows.map((row) => [row.id, row.referenceRangeSnapshot]));
+  private async resolveReferenceRange(parameterId: string, patient: { dateOfBirth: Date | null; age: number | null; gender: any }, method?: string | null, analyzer?: string | null, at = new Date()) {
+    const age = this.calculateAge(patient.dateOfBirth, patient.age);
+    const rows = await this.prisma.$queryRaw<ResolvedReferenceRange[]>(Prisma.sql`
+      SELECT "id", "version", "gender", "ageMinYears"::double precision, "ageMaxYears"::double precision,
+             "method", "analyzer", "low", "high", "displayRange", "unit", "effectiveFrom", "effectiveTo"
+      FROM "TestParameterReferenceRange"
+      WHERE "parameterId" = ${parameterId}
+        AND "effectiveFrom" <= ${at}
+        AND ("effectiveTo" IS NULL OR "effectiveTo" > ${at})
+        AND ("gender" IS NULL OR "gender" = ${patient.gender}::"Gender")
+        AND ("ageMinYears" IS NULL OR "ageMinYears" <= ${age})
+        AND ("ageMaxYears" IS NULL OR "ageMaxYears" >= ${age})
+        AND ("method" IS NULL OR "method" = ${method})
+        AND ("analyzer" IS NULL OR "analyzer" = ${analyzer})
+      ORDER BY
+        CASE WHEN "gender" IS NULL THEN 1 ELSE 0 END,
+        CASE WHEN "analyzer" IS NULL THEN 1 ELSE 0 END,
+        CASE WHEN "method" IS NULL THEN 1 ELSE 0 END,
+        CASE WHEN "ageMinYears" IS NULL AND "ageMaxYears" IS NULL THEN 1 ELSE 0 END,
+        COALESCE("ageMaxYears", 1000) - COALESCE("ageMinYears", 0),
+        "version" DESC
+      LIMIT 1
+    `;
+    return rows[0] ?? null;
   }
 
   private async getOrder(currentUser: AuthUser, orderId: string) {
@@ -213,5 +243,14 @@ export class ResultsService {
     if (high !== null && numberValue > high) return ResultFlag.HIGH;
     if (low !== null || high !== null) return ResultFlag.NORMAL;
     return undefined;
+  }
+
+  private calculateAge(dateOfBirth: Date | null, storedAge: number | null) {
+    if (!dateOfBirth) return Math.max(0, storedAge ?? 0);
+    const now = new Date();
+    let age = now.getFullYear() - dateOfBirth.getFullYear();
+    const beforeBirthday = now.getMonth() < dateOfBirth.getMonth() || (now.getMonth() === dateOfBirth.getMonth() && now.getDate() < dateOfBirth.getDate());
+    if (beforeBirthday) age -= 1;
+    return Math.max(0, age);
   }
 }
