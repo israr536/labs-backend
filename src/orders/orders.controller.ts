@@ -18,6 +18,12 @@ export class OrdersController {
     return this.ordersService.create(user, body ?? {});
   }
 
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN)
+  @Post('complete')
+  createCompleteReport(@CurrentUser() user: AuthUser, @Body() body: unknown) {
+    return this.ordersService.createCompleteReport(user, (body ?? {}) as Record<string, unknown>);
+  }
+
   @Get()
   findAll(
     @CurrentUser() user: AuthUser,
