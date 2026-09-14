@@ -30,6 +30,10 @@ export class PatientsService {
     });
   }
 
+  async count(currentUser: AuthUser) {
+    return { count: await this.prisma.patient.count({ where: { labId: currentUser.labId } }) };
+  }
+
   findAll(currentUser: AuthUser, search?: string) {
     return this.prisma.patient.findMany({ where: { labId: currentUser.labId, ...(search ? { OR: [
       { name: { contains: search, mode: 'insensitive' as const } },
