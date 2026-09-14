@@ -5,12 +5,33 @@ import { optionalString, requiredString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionService } from '../labs/subscription.service';
 import { TestsService } from '../tests/tests.service';
+import { PatientsService } from '../patients/patients.service';
+import { SamplesService } from '../samples/samples.service';
+import { ResultsService } from '../results/results.service';
+import { FinalReportsService } from '../final-reports/final-reports.service';
 
 interface CreateOrderBody { patientId?: unknown; testIds?: unknown; referredBy?: unknown; clinicalNotes?: unknown }
+interface CompleteReportBody {
+  patientId?: unknown;
+  patient?: { name?: unknown; dateOfBirth?: unknown; age?: unknown; gender?: unknown; mobile?: unknown; email?: unknown; address?: unknown };
+  testIds?: unknown;
+  parametersByTest?: Record<string, Array<{ name?: unknown; value?: unknown }>>;
+  referredBy?: unknown;
+  clinicalNotes?: unknown;
+  status?: unknown;
+}
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService, private readonly subscriptionService: SubscriptionService, private readonly testsService: TestsService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly subscriptionService: SubscriptionService,
+    private readonly testsService: TestsService,
+    private readonly patientsService: PatientsService,
+    private readonly samplesService: SamplesService,
+    private readonly resultsService: ResultsService,
+    private readonly finalReportsService: FinalReportsService,
+  ) {}
 
   async create(currentUser: AuthUser, body: CreateOrderBody) {
     const patientId = requiredString(body.patientId, 'patientId');
@@ -42,6 +63,80 @@ export class OrdersService {
         items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) },
       }, include: { patient: true, items: { include: { test: true } }, samples: true } });
     });
+  }
+
+  /**
+   * Creates the patient/order/sample/results/final report workflow behind one
+   * HTTP request. Existing endpoints remain unchanged and continue to support
+   * the individual workflow for compatibility.
+   */
+  async createCompleteReport(currentUser: AuthUser, body: CompleteReportBody) {
+    const patient = await this.resolvePatient(currentUser, body);
+    const testIds = this.normalizeTestIds(body.testIds);
+    if (!testIds.length) throw new BadRequestException('Please select at least one configured laboratory test.');
+
+    const order = await this.create(currentUser, {
+      patientId: patient.id,
+      testIds,
+      referredBy: body.referredBy,
+      clinicalNotes: body.clinicalNotes,
+    });
+
+    const samples = await this.samplesService.createForOrder(currentUser, order.id, {});
+    for (const sample of samples) {
+      for (const status of ['COLLECTED', 'RECEIVED', 'PROCESSING', 'COMPLETED'] as const) {
+        await this.samplesService.updateStatus(currentUser, sample.id, status);
+      }
+    }
+
+    const orderWithParameters = await this.resultsService.findOne(currentUser, order.id);
+    const resultInputs: Array<{ parameterId: string; value: string; sampleId?: string }> = [];
+    for (const [testId, parameters] of Object.entries(body.parametersByTest ?? {})) {
+      const item = (orderWithParameters.items as any[]).find((candidate) => candidate.test?.id === testId);
+      if (!item) continue;
+      const byName = new Map((item.test.parameters ?? []).map((parameter: any) => [parameter.name.trim().toLowerCase(), parameter]));
+      for (const input of parameters ?? []) {
+        const name = typeof input?.name === 'string' ? input.name.trim().toLowerCase() : '';
+        const parameter = byName.get(name) as any;
+        const value = input?.value === undefined || input?.value === null ? '' : String(input.value).trim();
+        if (parameter && value) resultInputs.push({ parameterId: parameter.id, value, sampleId: samples.find((sample) => sample.specimenType === item.test.sampleType)?.id ?? samples[0]?.id });
+      }
+    }
+
+    if (resultInputs.length) await this.resultsService.save(currentUser, order.id, { results: resultInputs });
+
+    const requestedStatus = typeof body.status === 'string' ? body.status.trim() : '';
+    const shouldFinalize = requestedStatus === 'Completed' || requestedStatus === 'Critical';
+    if (shouldFinalize) {
+      if (currentUser.role !== 'ADMIN' && currentUser.role !== 'TECHNICIAN') {
+        throw new BadRequestException('Only an administrator or technician can complete and finalize a report');
+      }
+      await this.resultsService.verify(currentUser, order.id);
+      return this.finalReportsService.finalize(currentUser, order.id);
+    }
+
+    return this.resultsService.findOne(currentUser, order.id);
+  }
+
+  private normalizeTestIds(value: unknown) {
+    if (!Array.isArray(value)) return [] as string[];
+    return [...new Set(value.map((item, index) => requiredString(item, `testIds.${index}`)))];
+  }
+
+  private async resolvePatient(currentUser: AuthUser, body: CompleteReportBody) {
+    const patientId = typeof body.patientId === 'string' ? body.patientId.trim() : '';
+    const payload = body.patient ?? {};
+    if (patientId) return this.patientsService.update(currentUser, patientId, payload);
+
+    const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+    const mobile = typeof payload.mobile === 'string' ? payload.mobile.trim() : '';
+    const search = mobile || name;
+    if (search) {
+      const existing = await this.patientsService.findAll(currentUser, search).catch(() => []);
+      const match = existing.find((candidate) => candidate.mobile === mobile && candidate.name?.toLowerCase() === name.toLowerCase());
+      if (match) return this.patientsService.update(currentUser, match.id, payload);
+    }
+    return this.patientsService.create(currentUser, payload);
   }
 
   async findOne(currentUser: AuthUser, id: string) {
@@ -113,12 +208,12 @@ export class OrdersService {
     return { data, pagination: { total, skip, take, page: Math.floor(skip / take) + 1, pages: Math.ceil(total / take) } };
   }
 
-  private async createOrderNumber(db: Prisma.TransactionClient, labId: string, labCode: string) {
+  private async createOrderNumber(tx: Prisma.TransactionClient, labId: string, labCode: string) {
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     for (let attempt = 0; attempt < 5; attempt++) {
       const suffix = Math.floor(100000 + Math.random() * 900000);
       const candidate = `${labCode}-ORD-${date}-${suffix}`;
-      const exists = await db.labOrder.findFirst({ where: { labId, orderNumber: candidate }, select: { id: true } });
+      const exists = await tx.labOrder.findFirst({ where: { labId, orderNumber: candidate }, select: { id: true } });
       if (!exists) return candidate;
     }
     throw new BadRequestException('Unable to allocate a unique order number');
