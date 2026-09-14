@@ -10,5 +10,6 @@ import { ResultsService } from './results.service';
   imports: [AuditModule, AuthModule, PrismaModule, ReferenceRangesModule],
   controllers: [ResultsController],
   providers: [ResultsService],
+  exports: [ResultsService],
 })
 export class ResultsModule {}
