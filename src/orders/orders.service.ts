@@ -37,17 +37,14 @@ export class OrdersService {
     const patientId = requiredString(body.patientId, 'patientId');
     if (!Array.isArray(body.testIds) || body.testIds.length === 0) throw new BadRequestException('testIds must contain at least one test');
     const testIds = [...new Set(body.testIds.map((value, index) => requiredString(value, `testIds.${index}`)))];
-
     const [patient, tests] = await Promise.all([
       this.prisma.patient.findFirst({ where: { id: patientId, labId: currentUser.labId } }),
       this.testsService.resolveForUse(currentUser, testIds),
     ]);
     if (!patient) throw new NotFoundException('Patient not found');
     if (tests.length !== testIds.length) throw new BadRequestException('One or more tests are invalid or inactive');
-
     const lab = await this.prisma.lab.findUnique({ where: { id: currentUser.labId }, select: { code: true } });
     if (!lab) throw new NotFoundException('Lab not found');
-
     return this.prisma.$transaction(async (tx) => {
       await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
       await this.subscriptionService.assertWithinLimit(currentUser.labId, 'orders', 1, tx);
@@ -70,21 +67,9 @@ export class OrdersService {
     const patient = await this.resolvePatient(currentUser, body);
     const testIds = this.normalizeTestIds(body.testIds);
     if (!testIds.length) throw new BadRequestException('Please select at least one configured laboratory test.');
-
-    const order = await this.create(currentUser, {
-      patientId: patient.id,
-      testIds,
-      referredBy: body.referredBy,
-      clinicalNotes: body.clinicalNotes,
-    });
-
+    const order = await this.create(currentUser, { patientId: patient.id, testIds, referredBy: body.referredBy, clinicalNotes: body.clinicalNotes });
     const samples = await this.samplesService.createForOrder(currentUser, order.id, {});
-    for (const sample of samples) {
-      for (const status of ['COLLECTED', 'RECEIVED', 'PROCESSING', 'COMPLETED'] as const) {
-        await this.samplesService.updateStatus(currentUser, sample.id, status);
-      }
-    }
-
+    for (const sample of samples) for (const status of ['COLLECTED', 'RECEIVED', 'PROCESSING', 'COMPLETED'] as const) await this.samplesService.updateStatus(currentUser, sample.id, status);
     const orderWithParameters = await this.resultsService.findOne(currentUser, order.id);
     const resultInputs: Array<{ parameterId: string; value: string; sampleId?: string }> = [];
     for (const [testId, parameters] of Object.entries(body.parametersByTest ?? {})) {
@@ -98,19 +83,13 @@ export class OrdersService {
         if (parameter && value) resultInputs.push({ parameterId: parameter.id, value, sampleId: samples.find((sample) => sample.specimenType === item.test.sampleType)?.id ?? samples[0]?.id });
       }
     }
-
     if (resultInputs.length) await this.resultsService.save(currentUser, order.id, { results: resultInputs });
-
     const requestedStatus = typeof body.status === 'string' ? body.status.trim() : '';
-    const shouldFinalize = requestedStatus === 'Completed' || requestedStatus === 'Critical';
-    if (shouldFinalize) {
-      if (currentUser.role !== 'ADMIN' && currentUser.role !== 'TECHNICIAN') {
-        throw new BadRequestException('Only an administrator or technician can complete and finalize a report');
-      }
+    if (requestedStatus === 'Completed' || requestedStatus === 'Critical') {
+      if (currentUser.role !== 'ADMIN' && currentUser.role !== 'TECHNICIAN') throw new BadRequestException('Only an administrator or technician can complete and finalize a report');
       await this.resultsService.verify(currentUser, order.id);
       return this.finalReportsService.finalize(currentUser, order.id);
     }
-
     return this.resultsService.findOne(currentUser, order.id);
   }
 
@@ -123,7 +102,6 @@ export class OrdersService {
     const patientId = typeof body.patientId === 'string' ? body.patientId.trim() : '';
     const payload = body.patient ?? {};
     if (patientId) return this.patientsService.update(currentUser, patientId, payload);
-
     const name = typeof payload.name === 'string' ? payload.name.trim() : '';
     const mobile = typeof payload.mobile === 'string' ? payload.mobile.trim() : '';
     const search = mobile || name;
@@ -136,10 +114,7 @@ export class OrdersService {
   }
 
   async findOne(currentUser: AuthUser, id: string) {
-    const items = await this.prisma.orderItem.findMany({
-      where: { orderId: id, order: { labId: currentUser.labId } },
-      select: { testId: true, test: { select: { id: true, code: true, name: true, catalogId: true, parameters: true } } },
-    });
+    const items = await this.prisma.orderItem.findMany({ where: { orderId: id, order: { labId: currentUser.labId } }, select: { testId: true, test: { select: { id: true, code: true, name: true, catalogId: true, parameters: true } } } });
     for (const item of items) {
       const test = item.test;
       const definition = test.catalogId
@@ -153,10 +128,7 @@ export class OrdersService {
         continue;
       }
       await this.prisma.$transaction(async (tx) => {
-        await tx.testParameter.createMany({
-          data: missing.map((parameter, index) => ({ testId: test.id, name: parameter.name, inputType: parameter.inputType, unit: parameter.unit ?? null, normalMin: parameter.normalMin ?? null, normalMax: parameter.normalMax ?? null, referenceRange: parameter.referenceRange ?? undefined, options: parameter.options ?? undefined, validation: parameter.validation ?? undefined, criticalLow: parameter.criticalLow ?? null, criticalHigh: parameter.criticalHigh ?? null, decimalPlaces: parameter.decimalPlaces ?? null, defaultValue: parameter.defaultValue ?? null, formula: parameter.formula ?? null, displayOrder: parameter.displayOrder ?? (test.parameters.length + index), isRequired: parameter.isRequired ?? true, remarks: parameter.remarks ?? null })),
-          skipDuplicates: true,
-        });
+        await tx.testParameter.createMany({ data: missing.map((parameter, index) => ({ testId: test.id, name: parameter.name, inputType: parameter.inputType, unit: parameter.unit ?? null, normalMin: parameter.normalMin ?? null, normalMax: parameter.normalMax ?? null, referenceRange: parameter.referenceRange ?? undefined, options: parameter.options ?? undefined, validation: parameter.validation ?? undefined, criticalLow: parameter.criticalLow ?? null, criticalHigh: parameter.criticalHigh ?? null, decimalPlaces: parameter.decimalPlaces ?? null, defaultValue: parameter.defaultValue ?? null, formula: parameter.formula ?? null, displayOrder: parameter.displayOrder ?? (test.parameters.length + index), isRequired: parameter.isRequired ?? true, remarks: parameter.remarks ?? null })), skipDuplicates: true });
         if (!test.catalogId) await tx.test.update({ where: { id: test.id }, data: { catalogId: definition.id } });
       });
     }
@@ -175,14 +147,29 @@ export class OrdersService {
     ] } : {}) };
     const [total, data] = await this.prisma.$transaction([
       this.prisma.labOrder.count({ where }),
-      this.prisma.labOrder.findMany({ where, include: { patient: true, items: { include: { test: true } }, samples: true }, orderBy: { createdAt: 'desc' }, skip, take }),
+      this.prisma.labOrder.findMany({
+        where,
+        include: {
+          patient: true,
+          items: {
+            include: {
+              test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } },
+              results: true,
+            },
+          },
+          samples: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+      }),
     ]);
     return { data, pagination: { total, skip, take, page: Math.floor(skip / take) + 1, pages: Math.ceil(total / take) } };
   }
 
   private async createOrderNumber(tx: Prisma.TransactionClient, labId: string, labCode: string) {
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    for (let attempt = 0; attempt < 5; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
       const suffix = Math.floor(100000 + Math.random() * 900000);
       const candidate = `${labCode}-ORD-${date}-${suffix}`;
       const exists = await tx.labOrder.findFirst({ where: { labId, orderNumber: candidate }, select: { id: true } });
