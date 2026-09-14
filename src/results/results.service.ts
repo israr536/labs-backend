@@ -97,7 +97,7 @@ export class ResultsService {
             value: result.value,
             flag: result.flag,
             referenceRangeId: result.referenceRangeId,
-            referenceRangeSnapshot: result.referenceRangeSnapshot,
+            referenceRangeSnapshot: result.referenceRangeSnapshot ?? Prisma.JsonNull,
           },
           update: {
             value: result.value,
@@ -106,7 +106,7 @@ export class ResultsService {
             verifiedAt: null,
             verifiedById: null,
             referenceRangeId: result.referenceRangeId,
-            referenceRangeSnapshot: result.referenceRangeSnapshot,
+            referenceRangeSnapshot: result.referenceRangeSnapshot ?? Prisma.JsonNull,
           },
         });
       }
@@ -198,7 +198,7 @@ export class ResultsService {
         COALESCE("ageMaxYears", 1000) - COALESCE("ageMinYears", 0),
         "version" DESC
       LIMIT 1
-    `;
+    `);
     return rows[0] ?? null;
   }
 
