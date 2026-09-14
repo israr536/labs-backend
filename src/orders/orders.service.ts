@@ -53,9 +53,19 @@ export class OrdersService {
     const patient = await this.resolvePatient(currentUser, body);
     const testIds = this.normalizeTestIds(body.testIds);
     if (!testIds.length) throw new BadRequestException('Please select at least one configured laboratory test.');
-    const order = await this.create(currentUser, { patientId: patient.id, testIds, referredBy: body.referredBy, clinicalNotes: body.clinicalNotes });
-    const samples = await this.samplesService.createForOrder(currentUser, order.id, {});
-    for (const sample of samples) for (const status of ['COLLECTED', 'RECEIVED', 'PROCESSING', 'COMPLETED'] as const) await this.samplesService.updateStatus(currentUser, sample.id, status);
+
+    // The complete-report endpoint has its own optimized path. Existing order
+    // APIs retain their original validation/lifecycle behaviour.
+    const order = await this.createFastCompleteOrder(currentUser, {
+      patientId: patient.id,
+      testIds,
+      referredBy: body.referredBy,
+      clinicalNotes: body.clinicalNotes,
+    });
+
+    // A report entered and completed on one screen does not need four separate
+    // sample status transactions. Normal sample APIs are unchanged.
+    const samples = await this.samplesService.createCompletedForOrder(currentUser, order.id, {});
 
     const orderWithParameters = await this.resultsService.findOne(currentUser, order.id);
     const resultInputs: Array<{ parameterId: string; value: string; sampleId?: string }> = [];
@@ -76,6 +86,42 @@ export class OrdersService {
       return this.finalReportsService.finalize(currentUser, order.id);
     }
     return this.resultsService.findOne(currentUser, order.id);
+  }
+
+  private async createFastCompleteOrder(currentUser: AuthUser, body: CreateOrderBody) {
+    const patientId = requiredString(body.patientId, 'patientId');
+    if (!Array.isArray(body.testIds) || body.testIds.length === 0) throw new BadRequestException('testIds must contain at least one test');
+    const testIds = [...new Set(body.testIds.map((value, index) => requiredString(value, `testIds.${index}`)))];
+
+    const [patient, tests, lab] = await Promise.all([
+      this.prisma.patient.findFirst({ where: { id: patientId, labId: currentUser.labId } }),
+      this.testsService.resolveForUse(currentUser, testIds),
+      this.prisma.lab.findUnique({ where: { id: currentUser.labId }, select: { code: true } }),
+    ]);
+    if (!patient) throw new NotFoundException('Patient not found');
+    if (tests.length !== testIds.length) throw new BadRequestException('One or more tests are invalid or inactive');
+    if (!lab) throw new NotFoundException('Lab not found');
+
+    return this.prisma.$transaction(async (tx) => {
+      // One cheap access/limit check for the hot path instead of counting
+      // users + patients + tests + orders on every report creation.
+      await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
+      await this.subscriptionService.assertCanCreateOrder(currentUser.labId, tx);
+      const orderNumber = await this.createOrderNumber(tx, currentUser.labId, lab.code);
+      return tx.labOrder.create({
+        data: {
+          labId: currentUser.labId,
+          patientId,
+          orderNumber,
+          status: OrderStatus.REGISTERED,
+          referredBy: optionalString(body.referredBy, 'referredBy'),
+          clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'),
+          createdById: currentUser.id,
+          items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) },
+        },
+        include: { patient: true, items: { include: { test: true } }, samples: true },
+      });
+    }, { timeout: 10000 });
   }
 
   private normalizeTestIds(value: unknown) { if (!Array.isArray(value)) return [] as string[]; return [...new Set(value.map((item, index) => requiredString(item, `testIds.${index}`)))]; }
@@ -120,7 +166,7 @@ export class OrdersService {
     const where: Prisma.LabOrderWhereInput = { labId: currentUser.labId, ...(status ? { status } : {}), ...(search ? { OR: [{ orderNumber: { contains: search, mode: 'insensitive' } }, { patient: { name: { contains: search, mode: 'insensitive' } } }, { patient: { mobile: { contains: search, mode: 'insensitive' } } }] } : {}) };
     const [total, data] = await this.prisma.$transaction([
       this.prisma.labOrder.count({ where }),
-      this.prisma.labOrder.findMany({ where, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } }, results: true } }, samples: true }, orderBy: { createdAt: 'desc' }, skip, take }),
+      this.prisma.labOrder.findMany({ where, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } } , results: true } }, samples: true }, orderBy: { createdAt: 'desc' }, skip, take }),
     ]);
     return { data, pagination: { total, skip, take, page: Math.floor(skip / take) + 1, pages: Math.ceil(total / take) } };
   }
