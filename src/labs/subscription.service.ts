@@ -51,23 +51,40 @@ export class SubscriptionService {
     });
     if (!lab) throw new NotFoundException('Lab not found');
 
-    const now = Date.now();
-    if (lab.subscriptionStartAt && lab.subscriptionStartAt.getTime() > now) {
-      throw new ForbiddenException('Subscription has not started yet');
-    }
-    if (lab.subscriptionEndAt && lab.subscriptionEndAt.getTime() <= now) {
-      throw new ForbiddenException('Subscription has expired');
-    }
+    this.assertSubscriptionDates(lab.subscriptionStartAt, lab.subscriptionEndAt);
     if (!lab.subscriptionPlan) return;
 
     const plan = this.normalizePlan(lab.subscriptionPlan);
-    const limitKey = `max${resource[0].toUpperCase()}${resource.slice(1)}` as keyof typeof SUBSCRIPTION_PLANS[SubscriptionPlan];
-    const limit = SUBSCRIPTION_PLANS[plan][limitKey] as number | null;
+    const limit = this.getLimit(plan, resource);
     if (limit === null) return;
 
     const usage = await this.getUsage(labId, db);
     if (usage[resource] + additional > limit) {
       throw new ForbiddenException(`${resource} limit reached for the ${SUBSCRIPTION_PLANS[plan].name} plan`);
+    }
+  }
+
+  /** Lightweight access/limit check for the report hot path. It deliberately
+   * checks only the resource being created instead of counting every resource
+   * in the lab. Keep assertWithinLimit() for general subscription management.
+   */
+  async assertCanCreateOrder(labId: string, db: PrismaLike = this.prisma) {
+    const lab = await db.lab.findUnique({
+      where: { id: labId },
+      select: { subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true },
+    });
+    if (!lab) throw new NotFoundException('Lab not found');
+
+    this.assertSubscriptionDates(lab.subscriptionStartAt, lab.subscriptionEndAt);
+    if (!lab.subscriptionPlan) return;
+
+    const plan = this.normalizePlan(lab.subscriptionPlan);
+    const limit = SUBSCRIPTION_PLANS[plan].maxOrders;
+    if (limit === null) return;
+
+    const usage = await db.labOrder.count({ where: { labId } });
+    if (usage + 1 > limit) {
+      throw new ForbiddenException(`orders limit reached for the ${SUBSCRIPTION_PLANS[plan].name} plan`);
     }
   }
 
@@ -90,6 +107,17 @@ export class SubscriptionService {
       db.labOrder.count({ where: { labId } }),
     ]);
     return { users, patients, tests, orders };
+  }
+
+  private assertSubscriptionDates(startAt: Date | null, endAt: Date | null) {
+    const now = Date.now();
+    if (startAt && startAt.getTime() > now) throw new ForbiddenException('Subscription has not started yet');
+    if (endAt && endAt.getTime() <= now) throw new ForbiddenException('Subscription has expired');
+  }
+
+  private getLimit(plan: SubscriptionPlan, resource: UsageResource) {
+    const limitKey = `max${resource[0].toUpperCase()}${resource.slice(1)}` as keyof typeof SUBSCRIPTION_PLANS[SubscriptionPlan];
+    return SUBSCRIPTION_PLANS[plan][limitKey] as number | null;
   }
 
   private normalizePlan(value: string | null): SubscriptionPlan {
