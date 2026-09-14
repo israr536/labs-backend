@@ -11,7 +11,7 @@ import { ResultsService } from '../results/results.service';
 import { FinalReportsService } from '../final-reports/final-reports.service';
 
 interface CreateOrderBody { patientId?: unknown; testIds?: unknown; referredBy?: unknown; clinicalNotes?: unknown }
-interface CompleteReportBody {
+export interface CompleteReportBody {
   patientId?: unknown;
   patient?: { name?: unknown; dateOfBirth?: unknown; age?: unknown; gender?: unknown; mobile?: unknown; email?: unknown; address?: unknown };
   testIds?: unknown;
@@ -65,11 +65,7 @@ export class OrdersService {
     });
   }
 
-  /**
-   * Creates the patient/order/sample/results/final report workflow behind one
-   * HTTP request. Existing endpoints remain unchanged and continue to support
-   * the individual workflow for compatibility.
-   */
+  /** Creates the complete report workflow behind one HTTP request. Existing endpoints remain unchanged. */
   async createCompleteReport(currentUser: AuthUser, body: CompleteReportBody) {
     const patient = await this.resolvePatient(currentUser, body);
     const testIds = this.normalizeTestIds(body.testIds);
@@ -144,50 +140,26 @@ export class OrdersService {
       where: { orderId: id, order: { labId: currentUser.labId } },
       select: { testId: true, test: { select: { id: true, code: true, name: true, catalogId: true, parameters: true } } },
     });
-
-    // Repair incomplete lab test panels on demand. We compare parameter names
-    // rather than counts so partially configured tests are also repaired.
     for (const item of items) {
       const test = item.test;
       const definition = test.catalogId
         ? await this.prisma.testDefinition.findFirst({ where: { id: test.catalogId, isActive: true }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } })
         : await this.prisma.testDefinition.findFirst({ where: { code: test.code, isActive: true }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } });
       if (!definition || !definition.parameters.length) continue;
-
       const existingNames = new Set(test.parameters.map((parameter) => parameter.name.trim().toLowerCase()));
       const missing = definition.parameters.filter((parameter) => !existingNames.has(parameter.name.trim().toLowerCase()));
       if (!missing.length) {
         if (!test.catalogId) await this.prisma.test.update({ where: { id: test.id }, data: { catalogId: definition.id } });
         continue;
       }
-
       await this.prisma.$transaction(async (tx) => {
         await tx.testParameter.createMany({
-          data: missing.map((parameter, index) => ({
-            testId: test.id,
-            name: parameter.name,
-            inputType: parameter.inputType,
-            unit: parameter.unit ?? null,
-            normalMin: parameter.normalMin ?? null,
-            normalMax: parameter.normalMax ?? null,
-            referenceRange: parameter.referenceRange ?? undefined,
-            options: parameter.options ?? undefined,
-            validation: parameter.validation ?? undefined,
-            criticalLow: parameter.criticalLow ?? null,
-            criticalHigh: parameter.criticalHigh ?? null,
-            decimalPlaces: parameter.decimalPlaces ?? null,
-            defaultValue: parameter.defaultValue ?? null,
-            formula: parameter.formula ?? null,
-            displayOrder: parameter.displayOrder ?? (test.parameters.length + index),
-            isRequired: parameter.isRequired ?? true,
-            remarks: parameter.remarks ?? null,
-          })),
+          data: missing.map((parameter, index) => ({ testId: test.id, name: parameter.name, inputType: parameter.inputType, unit: parameter.unit ?? null, normalMin: parameter.normalMin ?? null, normalMax: parameter.normalMax ?? null, referenceRange: parameter.referenceRange ?? undefined, options: parameter.options ?? undefined, validation: parameter.validation ?? undefined, criticalLow: parameter.criticalLow ?? null, criticalHigh: parameter.criticalHigh ?? null, decimalPlaces: parameter.decimalPlaces ?? null, defaultValue: parameter.defaultValue ?? null, formula: parameter.formula ?? null, displayOrder: parameter.displayOrder ?? (test.parameters.length + index), isRequired: parameter.isRequired ?? true, remarks: parameter.remarks ?? null })),
           skipDuplicates: true,
         });
         if (!test.catalogId) await tx.test.update({ where: { id: test.id }, data: { catalogId: definition.id } });
       });
     }
-
     const order = await this.prisma.labOrder.findFirst({ where: { id, labId: currentUser.labId }, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } }, results: true } }, samples: true, createdBy: { select: { id: true, username: true, role: true } } } });
     if (!order) throw new NotFoundException('Order not found');
     return { ...order, results: order.items.flatMap((item) => item.results) };
