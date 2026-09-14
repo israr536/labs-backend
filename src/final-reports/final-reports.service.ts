@@ -28,8 +28,9 @@ export class FinalReportsService {
 
     const missing: string[] = [];
     for (const item of order.items) {
+      const resultsByParameterId = new Map(item.results.map((row) => [row.parameterId, row]));
       for (const parameter of item.test.parameters) {
-        const result = item.results.find((row) => row.parameterId === parameter.id);
+        const result = resultsByParameterId.get(parameter.id);
         if (parameter.isRequired && (!result || !result.value.trim())) {
           missing.push(`${item.test.name}: ${parameter.name}`);
         }
@@ -113,7 +114,17 @@ export class FinalReportsService {
       report.id,
       { orderId, reportNumber, version: 1 },
     );
-    return this.getReport(currentUser, orderId);
+
+    // We already have the immutable snapshot and created report row. Avoid an
+    // immediate second DB read of the same final report just to return it.
+    return {
+      id: report.id,
+      reportNumber: report.reportNumber,
+      version: report.currentVersion,
+      finalizedAt: report.finalizedAt,
+      finalizedBy: { id: currentUser.id, username: (currentUser as any).username, role: currentUser.role },
+      ...snapshot,
+    };
   }
 
   async amend(currentUser: AuthUser, orderId: string, reasonValue: unknown) {
@@ -482,7 +493,7 @@ export class FinalReportsService {
         return reportNumber;
       }
     }
-    throw new BadRequestException('Unable to allocate a unique report number');
+    throw new BadRequestException('Unable to allocate unique report number');
   }
 
   private async getOrder(currentUser: AuthUser, orderId: string) {
@@ -515,37 +526,41 @@ export class FinalReportsService {
         orderedAt: order.orderedAt,
         patient: order.patient,
         samples: order.samples,
-        tests: order.items.map((item: any) => ({
-          orderItemId: item.id,
-          test: {
-            id: item.test.id,
-            code: item.test.code,
-            name: item.test.name,
-            category: item.test.category,
-            department: item.test.department,
-            sampleType: item.test.sampleType,
-            method: item.test.method,
-            remarks: item.test.remarks,
-          },
-          parameters: item.test.parameters.map((parameter: any) => {
-            const result = item.results.find((row: any) => row.parameterId === parameter.id);
-            const historicalRange = result?.referenceRangeSnapshot ?? null;
-            return {
-              parameterId: parameter.id,
-              name: parameter.name,
-              value: result?.value ?? null,
-              unit: historicalRange?.unit ?? parameter.unit,
-              referenceRange: historicalRange ?? parameter.referenceRange,
-              referenceRangeId: result?.referenceRangeId ?? null,
-              referenceRangeVersion: historicalRange?.version ?? null,
-              normalMin: historicalRange?.low ?? parameter.normalMin,
-              normalMax: historicalRange?.high ?? parameter.normalMax,
-              flag: result?.flag ?? null,
-              displayOrder: parameter.displayOrder,
-              remarks: parameter.remarks,
-            };
-          }),
-        })),
+        tests: order.items.map((item: any) => {
+          // One Map lookup per parameter instead of scanning every result array.
+          const resultByParameterId = new Map(item.results.map((row: any) => [row.parameterId, row]));
+          return {
+            orderItemId: item.id,
+            test: {
+              id: item.test.id,
+              code: item.test.code,
+              name: item.test.name,
+              category: item.test.category,
+              department: item.test.department,
+              sampleType: item.test.sampleType,
+              method: item.test.method,
+              remarks: item.test.remarks,
+            },
+            parameters: item.test.parameters.map((parameter: any) => {
+              const result = resultByParameterId.get(parameter.id);
+              const historicalRange = result?.referenceRangeSnapshot ?? null;
+              return {
+                parameterId: parameter.id,
+                name: parameter.name,
+                value: result?.value ?? null,
+                unit: historicalRange?.unit ?? parameter.unit,
+                referenceRange: historicalRange ?? parameter.referenceRange,
+                referenceRangeId: result?.referenceRangeId ?? null,
+                referenceRangeVersion: historicalRange?.version ?? null,
+                normalMin: historicalRange?.low ?? parameter.normalMin,
+                normalMax: historicalRange?.high ?? parameter.normalMax,
+                flag: result?.flag ?? null,
+                displayOrder: parameter.displayOrder,
+                remarks: parameter.remarks,
+              };
+            }),
+          };
+        }),
       },
       finalizedAt,
     };
