@@ -4,7 +4,7 @@ import { AuditService } from '../audit/audit.service';
 import { AuthUser } from '../auth/auth.types';
 import { arrayValue, requiredString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
-import { ReferenceRangesService, ResolvedReferenceRange } from '../reference-ranges/reference-ranges.service';
+import { ResolvedReferenceRange } from '../reference-ranges/reference-ranges.service';
 
 interface ResultInput { parameterId?: unknown; value?: unknown; sampleId?: unknown; analyzer?: unknown; }
 interface ResultsBody { results?: unknown; }
@@ -14,7 +14,6 @@ type ValidationRules = { min?: number; max?: number; minLength?: number; maxLeng
 export class ResultsService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly referenceRanges: ReferenceRangesService,
     private readonly audit: AuditService,
   ) {}
 
