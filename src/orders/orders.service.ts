@@ -50,26 +50,11 @@ export class OrdersService {
           referredBy: optionalString(body.referredBy, 'referredBy'),
           clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'),
           createdById: currentUser.id,
-          items: {
-            create: tests.map((test) => ({
-              testId: test.id,
-              price: test.price ?? 0,
-            })),
-          },
+          items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) },
         },
         include: {
           patient: true,
-          items: {
-            include: {
-              test: {
-                include: {
-                  parameters: {
-                    orderBy: { displayOrder: 'asc' },
-                  },
-                },
-              },
-            },
-          },
+          items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } } } },
           samples: true,
         },
       });
@@ -86,7 +71,8 @@ export class OrdersService {
     if (!testIds.length) throw new BadRequestException('Please select at least one configured laboratory test.');
     const order = await this.createFastCompleteOrder(currentUser, { patientId: patient.id, testIds, referredBy: body.referredBy, clinicalNotes: body.clinicalNotes });
     console.info(`[PERF] complete:create-order ${Date.now() - startedAt}ms`);
-    const samples = await this.samplesService.createCompletedForOrder(currentUser, order.id, {});
+    const specimenTypes = [...new Set((order.items as any[]).map((item) => item.test?.sampleType?.trim()).filter(Boolean))] as string[];
+    const samples = await this.samplesService.createCompletedForOrder(currentUser, order.id, { specimenTypes });
     console.info(`[PERF] complete:create-samples ${Date.now() - startedAt}ms`);
     const orderWithParameters = order;
     console.info(`[PERF] complete:load-parameters ${Date.now() - startedAt}ms (reused create-order payload)`);
@@ -145,26 +131,11 @@ export class OrdersService {
           referredBy: optionalString(body.referredBy, 'referredBy'),
           clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'),
           createdById: currentUser.id,
-          items: {
-            create: tests.map((test) => ({
-              testId: test.id,
-              price: test.price ?? 0,
-            })),
-          },
+          items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) },
         },
         include: {
           patient: true,
-          items: {
-            include: {
-              test: {
-                include: {
-                  parameters: {
-                    orderBy: { displayOrder: 'asc' },
-                  },
-                },
-              },
-            },
-          },
+          items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } } } },
           samples: true,
         },
       });
@@ -179,8 +150,10 @@ export class OrdersService {
     if (patientId) return this.patientsService.update(currentUser, patientId, payload);
     const name = typeof payload.name === 'string' ? payload.name.trim() : '';
     const mobile = typeof payload.mobile === 'string' ? payload.mobile.trim() : '';
-    const search = mobile || name;
-    if (search) { const existing = await this.patientsService.findAll(currentUser, search); const match = existing.find((candidate) => candidate.mobile === mobile && candidate.name?.toLowerCase() === name.toLowerCase()); if (match) return this.patientsService.update(currentUser, match.id, payload); }
+    if (mobile) {
+      const existing = await this.prisma.patient.findFirst({ where: { labId: currentUser.labId, mobile, ...(name ? { name: { equals: name, mode: 'insensitive' } } : {}) } });
+      if (existing) return this.patientsService.update(currentUser, existing.id, payload);
+    }
     return this.patientsService.create(currentUser, payload);
   }
 
@@ -194,7 +167,7 @@ export class OrdersService {
     const definitionByCode = new Map(definitions.map((definition) => [definition.code, definition]));
     const materialize = items.map((item) => { const test = item.test; const definition = (test.catalogId ? definitionById.get(test.catalogId) : undefined) ?? definitionByCode.get(test.code); if (!definition || !definition.parameters.length) return null; const existingNames = new Set(test.parameters.map((parameter) => parameter.name.trim().toLowerCase())); const missing = definition.parameters.filter((parameter) => !existingNames.has(parameter.name.trim().toLowerCase())); return { test, definition, missing }; }).filter((value): value is { test: (typeof items)[number]['test']; definition: (typeof definitions)[number]; missing: (typeof definitions)[number]['parameters'] } => Boolean(value && value.missing.length));
     if (materialize.length) await this.prisma.$transaction(async (tx) => { for (const { test, definition, missing } of materialize) { await tx.testParameter.createMany({ data: missing.map((parameter, index) => ({ testId: test.id, name: parameter.name, inputType: parameter.inputType, unit: parameter.unit ?? null, normalMin: parameter.normalMin ?? null, normalMax: parameter.normalMax ?? null, referenceRange: parameter.referenceRange ?? undefined, options: parameter.options ?? undefined, validation: parameter.validation ?? undefined, criticalLow: parameter.criticalLow ?? null, criticalHigh: parameter.criticalHigh ?? null, decimalPlaces: parameter.decimalPlaces ?? null, defaultValue: parameter.defaultValue ?? null, formula: parameter.formula ?? null, displayOrder: parameter.displayOrder ?? (test.parameters.length + index), isRequired: parameter.isRequired ?? true, remarks: parameter.remarks ?? null })), skipDuplicates: true }); if (!test.catalogId) await tx.test.update({ where: { id: test.id }, data: { catalogId: definition.id } }); } });
-    const order = await this.prisma.labOrder.findFirst({ where: { id, labId: currentUser.labId }, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } }, results: true } }, samples: true, createdBy: { select: { id: true, username: true, role: true } } } });
+    const order = await this.prisma.labOrder.findFirst({ where: { id, labId: currentUser.labId }, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } }, results: true } }, samples: true, createdBy: { select: { id: true, username: true, role: true } } } });
     if (!order) throw new NotFoundException('Order not found');
     return { ...order, results: order.items.flatMap((item) => item.results) };
   }
