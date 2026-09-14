@@ -42,17 +42,47 @@ export class TestsService {
   }
 
   /**
-   * Resolve the tests requested by an order/report. Catalog IDs are virtual
-   * defaults; only the selected tests are materialized for this user at the
-   * point they are actually used.
+   * Resolve selected tests in batches. The report screen normally submits
+   * materialized Test IDs, so one findMany replaces one DB query per test.
+   * Catalog-only IDs still fall back to the existing materialization path.
    */
   async resolveForUse(currentUser: AuthUser, ids: string[]) {
-    return Promise.all(ids.map(async (id) => {
-      const actual = await this.findActual(currentUser, id);
-      if (actual) return actual;
-      const effective = await this.findOne(currentUser, id);
-      return this.materializeForUser(currentUser, effective);
+    const uniqueIds = [...new Set(ids)];
+    if (!uniqueIds.length) return [];
+
+    const actualRows = await this.prisma.test.findMany({
+      where: { id: { in: uniqueIds }, labId: currentUser.labId },
+      include: { parameters: { orderBy: { displayOrder: 'asc' } }, catalog: true },
+    });
+    const actualById = new Map(actualRows.map((row) => [row.id, row]));
+    const missingIds = uniqueIds.filter((id) => !actualById.has(id));
+    if (!missingIds.length) return uniqueIds.map((id) => actualById.get(id)!).filter(Boolean);
+
+    const definitions = await this.prisma.testDefinition.findMany({
+      where: { id: { in: missingIds }, isActive: true },
+      include: { parameters: { orderBy: { displayOrder: 'asc' } } },
+    });
+    const definitionById = new Map(definitions.map((definition) => [definition.id, definition]));
+    const codes = definitions.map((definition) => definition.code);
+    const overrides = codes.length
+      ? await this.prisma.test.findMany({
+          where: { labId: currentUser.labId, OR: [{ catalogId: { in: definitions.map((definition) => definition.id) } }, { code: { in: codes } }] },
+          include: { parameters: { orderBy: { displayOrder: 'asc' } }, catalog: true },
+        })
+      : [];
+    const overrideByCatalog = new Map(overrides.filter((row) => row.catalogId).map((row) => [row.catalogId as string, row]));
+    const overrideByCode = new Map(overrides.map((row) => [row.code.toLowerCase(), row]));
+
+    const resolvedMissing = await Promise.all(missingIds.map(async (id) => {
+      const definition = definitionById.get(id);
+      if (!definition) throw new NotFoundException('Test not found');
+      const override = overrideByCatalog.get(definition.id) ?? overrideByCode.get(definition.code.toLowerCase());
+      return override ?? this.materializeForUser(currentUser, this.virtualTest(currentUser.labId, definition));
     }));
+
+    const resolvedById = new Map<string, any>(actualRows.map((row) => [row.id, row]));
+    for (let index = 0; index < missingIds.length; index += 1) resolvedById.set(missingIds[index], resolvedMissing[index]);
+    return uniqueIds.map((id) => resolvedById.get(id)).filter(Boolean);
   }
 
   async cloneFromCatalog(currentUser: AuthUser, catalogId: string, overrides: TestBody = {}) {
