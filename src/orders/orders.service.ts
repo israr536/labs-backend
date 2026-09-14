@@ -41,7 +41,38 @@ export class OrdersService {
       await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
       await this.subscriptionService.assertWithinLimit(currentUser.labId, 'orders', 1, tx);
       const orderNumber = await this.createOrderNumber(tx, currentUser.labId, lab.code);
-      return tx.labOrder.create({ data: { labId: currentUser.labId, patientId, orderNumber, status: OrderStatus.REGISTERED, referredBy: optionalString(body.referredBy, 'referredBy'), clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'), createdById: currentUser.id, items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) } }, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } } } }, samples: true } });
+      return tx.labOrder.create({
+        data: {
+          labId: currentUser.labId,
+          patientId,
+          orderNumber,
+          status: OrderStatus.REGISTERED,
+          referredBy: optionalString(body.referredBy, 'referredBy'),
+          clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'),
+          createdById: currentUser.id,
+          items: {
+            create: tests.map((test) => ({
+              testId: test.id,
+              price: test.price ?? 0,
+            })),
+          },
+        },
+        include: {
+          patient: true,
+          items: {
+            include: {
+              test: {
+                include: {
+                  parameters: {
+                    orderBy: { displayOrder: 'asc' },
+                  },
+                },
+              },
+            },
+          },
+          samples: true,
+        },
+      });
     }, { timeout: 10000 });
   }
 
@@ -57,8 +88,6 @@ export class OrdersService {
     console.info(`[PERF] complete:create-order ${Date.now() - startedAt}ms`);
     const samples = await this.samplesService.createCompletedForOrder(currentUser, order.id, {});
     console.info(`[PERF] complete:create-samples ${Date.now() - startedAt}ms`);
-    // createFastCompleteOrder already returns the selected tests and their materialized parameters.
-    // Re-querying the entire order here was adding another large DB round-trip for every report.
     const orderWithParameters = order;
     console.info(`[PERF] complete:load-parameters ${Date.now() - startedAt}ms (reused create-order payload)`);
     const resultInputs: Array<{ parameterId: string; value: string; sampleId?: string }> = [];
@@ -107,7 +136,38 @@ export class OrdersService {
       await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
       await this.subscriptionService.assertCanCreateOrder(currentUser.labId, tx);
       const orderNumber = await this.createOrderNumber(tx, currentUser.labId, lab.code);
-      return tx.labOrder.create({ data: { labId: currentUser.labId, patientId, orderNumber, status: OrderStatus.REGISTERED, referredBy: optionalString(body.referredBy, 'referredBy'), clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'), createdById: currentUser.id, items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) } }, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } } } }, samples: true });
+      return tx.labOrder.create({
+        data: {
+          labId: currentUser.labId,
+          patientId,
+          orderNumber,
+          status: OrderStatus.REGISTERED,
+          referredBy: optionalString(body.referredBy, 'referredBy'),
+          clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'),
+          createdById: currentUser.id,
+          items: {
+            create: tests.map((test) => ({
+              testId: test.id,
+              price: test.price ?? 0,
+            })),
+          },
+        },
+        include: {
+          patient: true,
+          items: {
+            include: {
+              test: {
+                include: {
+                  parameters: {
+                    orderBy: { displayOrder: 'asc' },
+                  },
+                },
+              },
+            },
+          },
+          samples: true,
+        },
+      });
     }, { timeout: 10000 });
   }
 
