@@ -162,7 +162,25 @@ export class OrdersService {
     if (!items.length) { const exists = await this.prisma.labOrder.findFirst({ where: { id, labId: currentUser.labId }, select: { id: true } }); if (!exists) throw new NotFoundException('Order not found'); }
     const catalogIds = [...new Set(items.map((item) => item.test.catalogId).filter((value): value is string => Boolean(value)))];
     const codes = [...new Set(items.map((item) => item.test.code).filter((value): value is string => Boolean(value)))];
-    const definitions = catalogIds.length || codes.length ? await this.prisma.testDefinition.findMany({ where: { isActive: true, OR: [...(catalogIds.length ? [{ id: { in: catalogIds } }] : []), ...(codes.length ? [{ code: { in: codes } }] : [])] }, include: { parameters: { orderBy: { displayOrder: 'asc' } } }) : [];
+    const definitions =
+      catalogIds.length || codes.length
+        ? await this.prisma.testDefinition.findMany({
+            where: {
+              isActive: true,
+              OR: [
+                ...(catalogIds.length ? [{ id: { in: catalogIds } }] : []),
+                ...(codes.length ? [{ code: { in: codes } }] : []),
+              ],
+            },
+            include: {
+              parameters: {
+                orderBy: {
+                  displayOrder: 'asc',
+                },
+              },
+            },
+          })
+        : [];
     const definitionById = new Map(definitions.map((definition) => [definition.id, definition]));
     const definitionByCode = new Map(definitions.map((definition) => [definition.code, definition]));
     const materialize = items.map((item) => { const test = item.test; const definition = (test.catalogId ? definitionById.get(test.catalogId) : undefined) ?? definitionByCode.get(test.code); if (!definition || !definition.parameters.length) return null; const existingNames = new Set(test.parameters.map((parameter) => parameter.name.trim().toLowerCase())); const missing = definition.parameters.filter((parameter) => !existingNames.has(parameter.name.trim().toLowerCase())); return { test, definition, missing }; }).filter((value): value is { test: (typeof items)[number]['test']; definition: (typeof definitions)[number]; missing: (typeof definitions)[number]['parameters'] } => Boolean(value && value.missing.length));
