@@ -32,19 +32,6 @@ export class TestCatalogController {
     return this.starterTestsService.provision(user);
   }
 
-  @Roles(UserRole.ADMIN)
-  @Post('enable-all')
-  async enableAll(@CurrentUser() user: AuthUser) {
-    const catalog = await this.service.findAll(user, {});
-    const results = catalog.map((definition) => ({ id: definition.id, code: definition.code, name: definition.name, status: 'already-enabled' as const }));
-    return {
-      total: catalog.length,
-      enabled: 0,
-      alreadyEnabled: results.length,
-      results,
-    };
-  }
-
   @Get(':id')
   findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.service.findOne(user, id); }
 
@@ -52,6 +39,6 @@ export class TestCatalogController {
   @Post(':id/enable')
   enable(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: unknown) {
     const overrides = (body ?? {}) as Record<string, unknown>;
-    return Object.keys(overrides).length ? this.testsService.update(user, id, overrides) : this.testsService.findOne(user, id);
+    return this.testsService.cloneFromCatalog(user, id, overrides);
   }
 }
