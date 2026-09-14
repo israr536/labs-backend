@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -96,7 +96,10 @@ export class SubscriptionService {
    */
   async lockLimit(db: PrismaTransaction, labId: string, resource: UsageResource) {
     const lockKey = `${labId}:${resource}`;
-    await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+    const result = await db.$queryRaw<Array<{ locked: boolean }>>`SELECT pg_try_advisory_xact_lock(hashtext(${lockKey})) AS locked`;
+    if (!result[0]?.locked) {
+      throw new ConflictException('Another report is being created for this laboratory. Please retry.');
+    }
   }
 
   private async getUsage(labId: string, db: PrismaLike = this.prisma) {
