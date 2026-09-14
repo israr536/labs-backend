@@ -68,8 +68,22 @@ export class OrdersService {
     const orderWithParameters = await this.findOne(currentUser, order.id);
     const resultInputs: Array<{ parameterId: string; value: string; sampleId?: string }> = [];
     for (const [testId, parameters] of Object.entries(body.parametersByTest ?? {})) {
-      const item = (orderWithParameters.items as any[]).find((candidate) => candidate.test?.id === testId);
-      if (!item) continue;
+      const normalizedTestId = testId.trim().toLowerCase();
+      const item = (orderWithParameters.items as any[]).find((candidate) => {
+        const test = candidate.test;
+        return (
+          test?.id?.trim().toLowerCase() === normalizedTestId ||
+          test?.catalogId?.trim().toLowerCase() === normalizedTestId ||
+          test?.code?.trim().toLowerCase() === normalizedTestId
+        );
+      });
+
+      if (!item) {
+        throw new BadRequestException(
+          `Unable to map report results to selected test: ${testId}`
+        );
+      }
+
       const byName = new Map((item.test.parameters ?? []).map((parameter: any) => [parameter.name.trim().toLowerCase(), parameter]));
       for (const input of parameters ?? []) {
         const name = typeof input?.name === 'string' ? input.name.trim().toLowerCase() : '';
