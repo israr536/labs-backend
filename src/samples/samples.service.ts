@@ -59,6 +59,56 @@ export class SamplesService {
     });
   }
 
+  /**
+   * Fast path for the single-screen report workflow. A report that is entered
+   * and completed immediately does not need four separate status transitions.
+   * The normal sample APIs above keep their existing lifecycle semantics.
+   */
+  async createCompletedForOrder(currentUser: AuthUser, orderId: string, body: CreateSamplesBody = {}) {
+    const order = await this.prisma.labOrder.findFirst({
+      where: { id: orderId, labId: currentUser.labId },
+      include: { items: { include: { test: { select: { sampleType: true } } } } },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    const terminalStatuses: OrderStatus[] = [OrderStatus.CANCELLED, OrderStatus.FINAL];
+    if (terminalStatuses.includes(order.status)) throw new BadRequestException('Samples cannot be created for this order');
+
+    const explicitSpecimenType = optionalString(body.specimenType, 'specimenType');
+    const explicitContainer = optionalString(body.container, 'container');
+    const specimenTypes = [...new Set(order.items.map((item) => item.test.sampleType?.trim()).filter(Boolean))] as string[];
+    if (explicitSpecimenType && !specimenTypes.includes(explicitSpecimenType)) {
+      throw new BadRequestException('The requested specimen type is not configured for this order');
+    }
+    const types = explicitSpecimenType ? [explicitSpecimenType] : specimenTypes;
+    if (types.length === 0) throw new BadRequestException('No specimen type is configured for the order tests');
+
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.sample.findMany({ where: { orderId: order.id }, select: { specimenType: true } });
+      const existingTypes = new Set(existing.map((sample) => sample.specimenType));
+      const typesToCreate = types.filter((type) => !existingTypes.has(type));
+      if (typesToCreate.length === 0) throw new BadRequestException('Samples already exist for the requested specimen types');
+
+      const now = new Date();
+      const samples: Sample[] = [];
+      for (const specimenType of typesToCreate) {
+        const accessionNumber = await this.createAccessionNumber(tx, currentUser.labId);
+        samples.push(await tx.sample.create({
+          data: {
+            labId: currentUser.labId,
+            orderId: order.id,
+            accessionNumber,
+            specimenType,
+            container: explicitContainer,
+            status: SampleStatus.COMPLETED,
+            collectedAt: now,
+            receivedAt: now,
+          },
+        }));
+      }
+      return samples;
+    });
+  }
+
   async findAll(currentUser: AuthUser, orderId?: string) {
     const where: Prisma.SampleWhereInput = { labId: currentUser.labId };
     if (orderId) where.orderId = orderId;
