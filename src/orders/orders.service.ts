@@ -95,7 +95,7 @@ export class OrdersService {
       await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
       await this.subscriptionService.assertCanCreateOrder(currentUser.labId, tx);
       const orderNumber = await this.createOrderNumber(tx, currentUser.labId, lab.code);
-      return tx.labOrder.create({ data: { labId: currentUser.labId, patientId, orderNumber, status: OrderStatus.REGISTERED, referredBy: optionalString(body.referredBy, 'referredBy'), clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'), createdById: currentUser.id, items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) } }, include: { patient: true, items: { include: { test: true } }, samples: true });
+      return tx.labOrder.create({ data: { labId: currentUser.labId, patientId, orderNumber, status: OrderStatus.REGISTERED, referredBy: optionalString(body.referredBy, 'referredBy'), clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'), createdById: currentUser.id, items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) } }, include: { patient: true, items: { include: { test: true } }, samples: true } });
     }, { timeout: 10000 });
   }
 
