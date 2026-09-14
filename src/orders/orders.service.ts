@@ -54,20 +54,18 @@ export class OrdersService {
     const testIds = this.normalizeTestIds(body.testIds);
     if (!testIds.length) throw new BadRequestException('Please select at least one configured laboratory test.');
 
-    // The complete-report endpoint has its own optimized path. Existing order
-    // APIs retain their original validation/lifecycle behaviour.
     const order = await this.createFastCompleteOrder(currentUser, {
       patientId: patient.id,
       testIds,
       referredBy: body.referredBy,
       clinicalNotes: body.clinicalNotes,
     });
-
-    // A report entered and completed on one screen does not need four separate
-    // sample status transactions. Normal sample APIs are unchanged.
     const samples = await this.samplesService.createCompletedForOrder(currentUser, order.id, {});
 
-    const orderWithParameters = await this.resultsService.findOne(currentUser, order.id);
+    // OrdersService.findOne returns the full test parameter definitions. ResultsService.findOne
+    // intentionally returns a lightweight DTO, so using it here would hide parameters and
+    // produce an empty resultInputs array before verification.
+    const orderWithParameters = await this.findOne(currentUser, order.id);
     const resultInputs: Array<{ parameterId: string; value: string; sampleId?: string }> = [];
     for (const [testId, parameters] of Object.entries(body.parametersByTest ?? {})) {
       const item = (orderWithParameters.items as any[]).find((candidate) => candidate.test?.id === testId);
@@ -82,6 +80,7 @@ export class OrdersService {
     }
     if (resultInputs.length) await this.resultsService.save(currentUser, order.id, { results: resultInputs });
     if (shouldFinalize) {
+      if (!resultInputs.length) throw new BadRequestException('No report results were provided. Enter at least one result before completing the report.');
       await this.resultsService.verify(currentUser, order.id);
       return this.finalReportsService.finalize(currentUser, order.id);
     }
@@ -103,8 +102,6 @@ export class OrdersService {
     if (!lab) throw new NotFoundException('Lab not found');
 
     return this.prisma.$transaction(async (tx) => {
-      // One cheap access/limit check for the hot path instead of counting
-      // users + patients + tests + orders on every report creation.
       await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
       await this.subscriptionService.assertCanCreateOrder(currentUser.labId, tx);
       const orderNumber = await this.createOrderNumber(tx, currentUser.labId, lab.code);
@@ -166,7 +163,7 @@ export class OrdersService {
     const where: Prisma.LabOrderWhereInput = { labId: currentUser.labId, ...(status ? { status } : {}), ...(search ? { OR: [{ orderNumber: { contains: search, mode: 'insensitive' } }, { patient: { name: { contains: search, mode: 'insensitive' } } }, { patient: { mobile: { contains: search, mode: 'insensitive' } } }] } : {}) };
     const [total, data] = await this.prisma.$transaction([
       this.prisma.labOrder.count({ where }),
-      this.prisma.labOrder.findMany({ where, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } } , results: true } }, samples: true }, orderBy: { createdAt: 'desc' }, skip, take }),
+      this.prisma.labOrder.findMany({ where, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } }, results: true } }, samples: true }, orderBy: { createdAt: 'desc' }, skip, take }),
     ]);
     return { data, pagination: { total, skip, take, page: Math.floor(skip / take) + 1, pages: Math.ceil(total / take) } };
   }
