@@ -11,15 +11,7 @@ import { ResultsService } from '../results/results.service';
 import { FinalReportsService } from '../final-reports/final-reports.service';
 
 interface CreateOrderBody { patientId?: unknown; testIds?: unknown; referredBy?: unknown; clinicalNotes?: unknown }
-export interface CompleteReportBody {
-  patientId?: unknown;
-  patient?: { name?: unknown; dateOfBirth?: unknown; age?: unknown; gender?: unknown; mobile?: unknown; email?: unknown; address?: unknown };
-  testIds?: unknown;
-  parametersByTest?: Record<string, Array<{ name?: unknown; value?: unknown }>>;
-  referredBy?: unknown;
-  clinicalNotes?: unknown;
-  status?: unknown;
-}
+export interface CompleteReportBody { patientId?: unknown; patient?: { name?: unknown; dateOfBirth?: unknown; age?: unknown; gender?: unknown; mobile?: unknown; email?: unknown; address?: unknown }; testIds?: unknown; parametersByTest?: Record<string, Array<{ name?: unknown; value?: unknown }>>; referredBy?: unknown; clinicalNotes?: unknown; status?: unknown; }
 
 @Injectable()
 export class OrdersService {
@@ -41,23 +33,7 @@ export class OrdersService {
       await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
       await this.subscriptionService.assertWithinLimit(currentUser.labId, 'orders', 1, tx);
       const orderNumber = this.createOrderNumber(currentUser.labId, lab.code);
-      return tx.labOrder.create({
-        data: {
-          labId: currentUser.labId,
-          patientId,
-          orderNumber,
-          status: OrderStatus.REGISTERED,
-          referredBy: optionalString(body.referredBy, 'referredBy'),
-          clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'),
-          createdById: currentUser.id,
-          items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) },
-        },
-        include: {
-          patient: true,
-          items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } } } },
-          samples: true,
-        },
-      });
+      return tx.labOrder.create({ data: { labId: currentUser.labId, patientId, orderNumber, status: OrderStatus.REGISTERED, referredBy: optionalString(body.referredBy, 'referredBy'), clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'), createdById: currentUser.id, items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) } }, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } } } }, samples: true } });
     }, { timeout: 10000 });
   }
 
@@ -74,11 +50,10 @@ export class OrdersService {
     const specimenTypes = [...new Set((order.items as any[]).map((item) => item.test?.sampleType?.trim()).filter(Boolean))] as string[];
     const samples = await this.samplesService.createCompletedForOrder(currentUser, order.id, { specimenTypes });
     console.info(`[PERF] complete:create-samples ${Date.now() - startedAt}ms`);
-    const orderWithParameters = order;
     console.info(`[PERF] complete:load-parameters ${Date.now() - startedAt}ms (reused create-order payload)`);
     const resultInputs: Array<{ parameterId: string; value: string; sampleId?: string }> = [];
     const itemsByTestKey = new Map<string, any>();
-    for (const item of orderWithParameters.items as any[]) for (const key of [item.test?.id, item.test?.catalogId, item.test?.code]) if (typeof key === 'string' && key.trim()) itemsByTestKey.set(key.trim().toLowerCase(), item);
+    for (const item of order.items as any[]) for (const key of [item.test?.id, item.test?.catalogId, item.test?.code]) if (typeof key === 'string' && key.trim()) itemsByTestKey.set(key.trim().toLowerCase(), item);
     const samplesBySpecimen = new Map(samples.map((sample) => [sample.specimenType, sample.id]));
     for (const [testId, parameters] of Object.entries(body.parametersByTest ?? {})) {
       const item = itemsByTestKey.get(testId.trim().toLowerCase());
@@ -100,31 +75,12 @@ export class OrdersService {
         const workflowItems = (order.items as any[]).map((item) => {
           const itemResult = normalized.find((result) => result.orderItemId === item.id);
           const orderItemId = itemResult?.orderItemId ?? item.id;
-          return {
-            ...item,
-            id: orderItemId,
-            results: normalized.filter((result) => result.orderItemId === orderItemId).map((result) => ({
-              ...result,
-              id: undefined,
-              verifiedAt: null,
-            })),
-          };
+          return { ...item, id: orderItemId, results: normalized.filter((result) => result.orderItemId === orderItemId).map((result) => ({ ...result, id: undefined, verifiedAt: null })) };
         });
-        const verificationOrder = {
-          ...order,
-          patient,
-          samples,
-          status: OrderStatus.RESULT_ENTERED,
-          revision: (order as any).revision ?? 1,
-          items: workflowItems,
-        };
+        const verificationOrder = { ...order, patient, samples, status: OrderStatus.RESULT_ENTERED, revision: ((order as any).revision ?? 1) + 1, items: workflowItems };
         await this.resultsService.verifyLoaded(currentUser, verificationOrder, { reload: false });
         console.info(`[PERF] complete:verify ${Date.now() - startedAt}ms`);
-        const finalized = await this.finalReportsService.finalize(
-          currentUser,
-          order.id,
-          { ...verificationOrder, status: OrderStatus.VERIFIED, lab: (order as any).lab },
-        );
+        const finalized = await this.finalReportsService.finalize(currentUser, order.id, { ...verificationOrder, status: OrderStatus.VERIFIED, lab: (order as any).lab });
         console.info(`[PERF] complete:finalize ${Date.now() - startedAt}ms`);
         return finalized;
       }
@@ -138,10 +94,7 @@ export class OrdersService {
     const testIds = [...new Set(body.testIds.map((value, index) => requiredString(value, `testIds.${index}`)))];
     const [tests, lab] = await Promise.all([
       this.testsService.resolveForUse(currentUser, testIds),
-      this.prisma.lab.findUnique({
-        where: { id: currentUser.labId },
-        select: { id: true, code: true, name: true, mobile: true, email: true, address: true, icon: true },
-      }),
+      this.prisma.lab.findUnique({ where: { id: currentUser.labId }, select: { id: true, code: true, name: true, mobile: true, email: true, address: true, icon: true } }),
     ]);
     if (tests.length !== testIds.length) throw new BadRequestException('One or more tests are invalid or inactive');
     if (!lab) throw new NotFoundException('Lab not found');
@@ -149,39 +102,8 @@ export class OrdersService {
       await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
       await this.subscriptionService.assertCanCreateOrder(currentUser.labId, tx);
       const orderNumber = this.createOrderNumber(currentUser.labId, lab.code);
-      const created = await tx.labOrder.create({
-        data: {
-          labId: currentUser.labId,
-          patientId,
-          orderNumber,
-          status: OrderStatus.REGISTERED,
-          referredBy: optionalString(body.referredBy, 'referredBy'),
-          clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'),
-          createdById: currentUser.id,
-          items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) },
-        },
-        select: { id: true, orderNumber: true, status: true, patientId: true, revision: true },
-      });
-      return {
-        ...created,
-        lab,
-        items: tests.map((test) => ({
-          id: '',
-          testId: test.id,
-          test: {
-            id: test.id,
-            catalogId: test.catalogId,
-            code: test.code,
-            name: test.name,
-            category: test.category,
-            department: test.department,
-            sampleType: test.sampleType,
-            method: test.method,
-            remarks: test.remarks,
-            parameters: test.parameters,
-          },
-        })),
-      };
+      const created = await tx.labOrder.create({ data: { labId: currentUser.labId, patientId, orderNumber, status: OrderStatus.REGISTERED, referredBy: optionalString(body.referredBy, 'referredBy'), clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'), createdById: currentUser.id, items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) } }, select: { id: true, orderNumber: true, status: true, patientId: true, revision: true } });
+      return { ...created, lab, items: tests.map((test) => ({ id: '', testId: test.id, test: { id: test.id, catalogId: test.catalogId, code: test.code, name: test.name, category: test.category, department: test.department, sampleType: test.sampleType, method: test.method, remarks: test.remarks, parameters: test.parameters } })) };
     }, { timeout: 10000 });
   }
 
@@ -193,10 +115,7 @@ export class OrdersService {
     if (patientId) return this.patientsService.update(currentUser, patientId, payload);
     const name = typeof payload.name === 'string' ? payload.name.trim() : '';
     const mobile = typeof payload.mobile === 'string' ? payload.mobile.trim() : '';
-    if (mobile) {
-      const existing = await this.prisma.patient.findFirst({ where: { labId: currentUser.labId, mobile, ...(name ? { name: { equals: name, mode: 'insensitive' } } : {}) } });
-      if (existing) return this.patientsService.update(currentUser, existing.id, payload);
-    }
+    if (mobile) { const existing = await this.prisma.patient.findFirst({ where: { labId: currentUser.labId, mobile, ...(name ? { name: { equals: name, mode: 'insensitive' } } : {}) } }); if (existing) return this.patientsService.update(currentUser, existing.id, payload); }
     return this.patientsService.create(currentUser, payload);
   }
 
@@ -223,9 +142,5 @@ export class OrdersService {
     return { data, pagination: { total, skip, take, page: Math.floor(skip / take) + 1, pages: Math.ceil(total / take) } };
   }
 
-  private createOrderNumber(labId: string, labCode: string) {
-    const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const suffix = Math.floor(100000 + Math.random() * 900000);
-    return `${labCode}-ORD-${date}-${suffix}`;
-  }
+  private createOrderNumber(labId: string, labCode: string) { const date = new Date().toISOString().slice(0, 10).replace(/-/g, ''); const suffix = Math.floor(100000 + Math.random() * 900000); return `${labCode}-ORD-${date}-${suffix}`; }
 }
