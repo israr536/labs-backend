@@ -35,11 +35,7 @@ export class SamplesService {
       const existingTypes = new Set(existing.map((sample) => sample.specimenType));
       const typesToCreate = types.filter((type) => !existingTypes.has(type));
       if (typesToCreate.length === 0) throw new BadRequestException('Samples already exist for the requested specimen types');
-      const samples: Sample[] = [];
-      for (const specimenType of typesToCreate) {
-        const accessionNumber = await this.createAccessionNumber(tx, currentUser.labId);
-        samples.push(await tx.sample.create({ data: { labId: currentUser.labId, orderId: order.id, accessionNumber, specimenType, container: explicitContainer } }));
-      }
+      const samples = await this.createSamplesBatch(tx, currentUser.labId, order.id, typesToCreate, explicitContainer);
       return samples;
     });
   }
@@ -67,11 +63,7 @@ export class SamplesService {
       const typesToCreate = types.filter((type) => !existingTypes.has(type));
       if (typesToCreate.length === 0) throw new BadRequestException('Samples already exist for the requested specimen types');
       const now = new Date();
-      const samples: Sample[] = [];
-      for (const specimenType of typesToCreate) {
-        const accessionNumber = await this.createAccessionNumber(tx, currentUser.labId);
-        samples.push(await tx.sample.create({ data: { labId: currentUser.labId, orderId, accessionNumber, specimenType, container: explicitContainer, status: SampleStatus.COMPLETED, collectedAt: now, receivedAt: now } }));
-      }
+      const samples = await this.createSamplesBatch(tx, currentUser.labId, orderId, typesToCreate, explicitContainer, now);
       await tx.labOrder.update({ where: { id: orderId }, data: { status: OrderStatus.SAMPLE_COLLECTED } });
       return samples;
     });
@@ -112,14 +104,36 @@ export class SamplesService {
     });
   }
 
-  private async createAccessionNumber(tx: Prisma.TransactionClient, labId: string) {
+  private async createSamplesBatch(
+    tx: Prisma.TransactionClient,
+    labId: string,
+    orderId: string,
+    specimenTypes: string[],
+    container?: string | null,
+    now = new Date(),
+  ) {
+    const data = specimenTypes.map((specimenType) => ({
+      labId,
+      orderId,
+      accessionNumber: this.createAccessionNumber(),
+      specimenType,
+      container,
+      status: SampleStatus.COMPLETED,
+      collectedAt: now,
+      receivedAt: now,
+    }));
+
+    await tx.sample.createMany({ data });
+    const accessionNumbers = data.map((item) => item.accessionNumber);
+    return tx.sample.findMany({
+      where: { labId, orderId, accessionNumber: { in: accessionNumbers } },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  private createAccessionNumber() {
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const suffix = Math.floor(100000 + Math.random() * 900000);
-      const candidate = `ACC-${date}-${suffix}`;
-      const exists = await tx.sample.findFirst({ where: { labId, accessionNumber: candidate }, select: { id: true } });
-      if (!exists) return candidate;
-    }
-    throw new BadRequestException('Unable to allocate a unique accession number');
+    const suffix = Math.floor(100000 + Math.random() * 900000);
+    return `ACC-${date}-${suffix}`;
   }
 }
