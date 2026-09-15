@@ -14,7 +14,7 @@ type ValidationRules = { min?: number; max?: number; minLength?: number; maxLeng
 export class ResultsService {
   constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
 
-  async save(currentUser: AuthUser, orderId: string, body: ResultsBody = {}, options: { reload?: boolean; loadedOrder?: any; tx?: Prisma.TransactionClient } = {}) {
+  async save(currentUser: AuthUser, orderId: string, body: ResultsBody = {}, options: { reload?: boolean; loadedOrder?: any; tx?: Prisma.TransactionClient; skipAudit?: boolean } = {}) {
     const inputs = arrayValue<ResultInput>(body.results ?? [], 'results');
     const order: any = options.loadedOrder ?? (await (options.tx ?? this.prisma).labOrder.findFirst({ where: { id: orderId, labId: currentUser.labId }, include: { patient: true, samples: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } }, results: true } } } }));
     if (!order) throw new NotFoundException('Order not found');
@@ -66,7 +66,9 @@ export class ResultsService {
       }
     };
     if (options.tx) await write(options.tx); else await this.prisma.$transaction(write);
-    await this.audit.record(currentUser, AuditAction.UPDATE, 'LabOrderResults', order.id, { operation: 'SAVE_RESULTS', orderRevision: revision + 1, createdCount: createdParameterIds.length, updatedCount: changedParameterIds.length, createdParameterIds, updatedParameterIds: changedParameterIds });
+    if (!options.skipAudit) {
+      await this.audit.record(currentUser, AuditAction.UPDATE, 'LabOrderResults', order.id, { operation: 'SAVE_RESULTS', orderRevision: revision + 1, createdCount: createdParameterIds.length, updatedCount: changedParameterIds.length, createdParameterIds, updatedParameterIds: changedParameterIds });
+    }
     if (options.reload === false) return { normalized };
     return this.findOne(currentUser, orderId);
   }
@@ -79,7 +81,7 @@ export class ResultsService {
   async verify(currentUser: AuthUser, orderId: string, options: { reload?: boolean } = {}) { return this.verifyLoaded(currentUser, await this.getOrder(currentUser, orderId), options); }
   async getOrderForWorkflow(currentUser: AuthUser, orderId: string) { return this.getOrder(currentUser, orderId); }
 
-  async verifyLoaded(currentUser: AuthUser, order: any, options: { reload?: boolean; tx?: Prisma.TransactionClient } = {}) {
+  async verifyLoaded(currentUser: AuthUser, order: any, options: { reload?: boolean; tx?: Prisma.TransactionClient; skipAudit?: boolean } = {}) {
     if (order.status !== OrderStatus.RESULT_ENTERED) throw new BadRequestException('Only orders with entered results can be verified');
     const missing: string[] = [];
     const resultIds: string[] = [];
@@ -107,7 +109,9 @@ export class ResultsService {
       if (verified.count !== resultKeys.length) throw new ConflictException('One or more results changed while verification is in progress. Reload the order and try again.');
     };
     if (options.tx) await write(options.tx); else await this.prisma.$transaction(write);
-    await this.audit.record(currentUser, AuditAction.VERIFY, 'LabOrderResults', order.id, { operation: 'VERIFY_RESULTS', resultCount: resultKeys.length, resultIds, resultKeys });
+    if (!options.skipAudit) {
+      await this.audit.record(currentUser, AuditAction.VERIFY, 'LabOrderResults', order.id, { operation: 'VERIFY_RESULTS', resultCount: resultKeys.length, resultIds, resultKeys });
+    }
     if (options.reload === false) return { id: order.id, status: OrderStatus.VERIFIED, revision: order.revision + 1 };
     return this.findOne(currentUser, order.id);
   }
@@ -116,7 +120,10 @@ export class ResultsService {
     if (!parameterIds.length) return new Map<string, ResolvedReferenceRange>();
     const age = this.calculateAge(patient.dateOfBirth, patient.age);
     const db = tx ?? this.prisma;
-    const rows = await db.testParameterReferenceRange.findMany({ where: { parameterId: { in: parameterIds }, effectiveFrom: { lte: at }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: at } }] } });
+    const rows = await db.testParameterReferenceRange.findMany({
+      where: { parameterId: { in: parameterIds }, effectiveFrom: { lte: at }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: at } }] },
+      select: { id: true, parameterId: true, version: true, gender: true, ageMinYears: true, ageMaxYears: true, method: true, analyzer: true, low: true, high: true, displayRange: true, unit: true, effectiveFrom: true, effectiveTo: true },
+    });
     const best = new Map<string, ResolvedReferenceRange>();
     const scores = new Map<string, number[]>();
     const better = (a: number[], b: number[]) => { for (let i = 0; i < a.length; i += 1) { if (a[i] !== b[i]) return a[i] < b[i]; } return false; };
