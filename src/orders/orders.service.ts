@@ -102,7 +102,14 @@ export class OrdersService {
       const verificationOrder = await this.resultsService.getOrderForWorkflow(currentUser, order.id);
       await this.resultsService.verifyLoaded(currentUser, verificationOrder, { reload: false });
       console.info(`[PERF] complete:verify ${Date.now() - startedAt}ms`);
-      const finalized = await this.finalReportsService.finalize(currentUser, order.id);
+      // verifyLoaded changes the persisted order status to VERIFIED. Reuse the
+      // already-loaded order for finalization instead of issuing another large
+      // patient + samples + items + parameters + results query.
+      const finalized = await this.finalReportsService.finalize(
+        currentUser,
+        order.id,
+        { ...verificationOrder, status: OrderStatus.VERIFIED },
+      );
       console.info(`[PERF] complete:finalize ${Date.now() - startedAt}ms`);
       return finalized;
     }
