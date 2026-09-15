@@ -71,13 +71,8 @@ export class ResultsService {
     return { id: order.id, orderNumber: order.orderNumber, status: order.status, revision: order.revision, patient: order.patient, samples: order.samples, items: order.items.map((item) => ({ id: item.id, test: { id: item.test.id, code: item.test.code, name: item.test.name }, results: item.results.map((result) => ({ ...result, referenceRangeSnapshot: result.referenceRangeSnapshot ?? null })) })) };
   }
 
-  async verify(currentUser: AuthUser, orderId: string, options: { reload?: boolean } = {}) {
-    return this.verifyLoaded(currentUser, await this.getOrder(currentUser, orderId), options);
-  }
-
-  async getOrderForWorkflow(currentUser: AuthUser, orderId: string) {
-    return this.getOrder(currentUser, orderId);
-  }
+  async verify(currentUser: AuthUser, orderId: string, options: { reload?: boolean } = {}) { return this.verifyLoaded(currentUser, await this.getOrder(currentUser, orderId), options); }
+  async getOrderForWorkflow(currentUser: AuthUser, orderId: string) { return this.getOrder(currentUser, orderId); }
 
   async verifyLoaded(currentUser: AuthUser, order: any, options: { reload?: boolean } = {}) {
     if (order.status !== OrderStatus.RESULT_ENTERED) throw new BadRequestException('Only orders with entered results can be verified');
@@ -102,12 +97,12 @@ export class ResultsService {
     await this.prisma.$transaction(async (tx) => {
       const locked = await tx.labOrder.updateMany({ where: { id: order.id, labId: currentUser.labId, revision: order.revision, status: OrderStatus.RESULT_ENTERED }, data: { status: OrderStatus.VERIFIED, revision: { increment: 1 } } });
       if (locked.count !== 1) throw new ConflictException('This order changed while you were verifying it. Reload the order and try again.');
-      const where = resultIds.length === resultKeys.length
+      const resultWhere = resultIds.length === resultKeys.length
         ? { id: { in: resultIds }, verifiedAt: null }
-        : { OR: resultKeys.map((key) => ({ orderItemId_parameterId: key })), verifiedAt: null };
-      const verified = await tx.orderResult.updateMany({ where, data: { verifiedAt, verifiedById: currentUser.id } });
+        : { OR: resultKeys.map((key) => ({ orderItemId: key.orderItemId, parameterId: key.parameterId })), verifiedAt: null };
+      const verified = await tx.orderResult.updateMany({ where: resultWhere, data: { verifiedAt, verifiedById: currentUser.id } });
       if (verified.count !== resultKeys.length) throw new ConflictException('One or more results changed while verification is in progress. Reload the order and try again.');
-      await tx.auditLog.create({ data: { labId: currentUser.labId, actorId: currentUser.id, action: AuditAction.VERIFY, entity: 'LabOrderResults', entityId: order.id, metadata: { operation: 'VERIFY_RESULTS', resultCount: resultKeys.length, resultIds: resultIds.length ? resultIds : undefined, resultKeys } });
+      await tx.auditLog.create({ data: { labId: currentUser.labId, actorId: currentUser.id, action: AuditAction.VERIFY, entity: 'LabOrderResults', entityId: order.id, metadata: { operation: 'VERIFY_RESULTS', resultCount: resultKeys.length, resultIds, resultKeys } });
     });
     if (options.reload === false) return undefined;
     return this.findOne(currentUser, order.id);
