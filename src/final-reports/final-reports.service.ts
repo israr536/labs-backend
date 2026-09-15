@@ -1,1 +1,1 @@
-// restore via branch reset
+// reset branch to previous commit
