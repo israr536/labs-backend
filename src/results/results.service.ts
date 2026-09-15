@@ -62,7 +62,7 @@ export class ResultsService {
       await tx.labOrder.update({ where: { id: order.id }, data: { status: OrderStatus.RESULT_ENTERED } });
       await tx.auditLog.create({ data: { labId: currentUser.labId, actorId: currentUser.id, action: AuditAction.UPDATE, entity: 'LabOrderResults', entityId: order.id, metadata: { operation: 'SAVE_RESULTS', orderRevision: order.revision + 1, createdCount: createdParameterIds.length, updatedCount: changedParameterIds.length, createdParameterIds, updatedParameterIds: changedParameterIds } });
     });
-    if (options.reload === false) return undefined;
+    if (options.reload === false) return { normalized };
     return this.findOne(currentUser, orderId);
   }
 
@@ -83,26 +83,31 @@ export class ResultsService {
     if (order.status !== OrderStatus.RESULT_ENTERED) throw new BadRequestException('Only orders with entered results can be verified');
     const missing: string[] = [];
     const resultIds: string[] = [];
+    const resultKeys: Array<{ orderItemId: string; parameterId: string }> = [];
     for (const item of order.items) {
       const resultsByParameter = new Map(item.results.map((row) => [row.parameterId, row]));
       for (const parameter of item.test.parameters) {
         const result = resultsByParameter.get(parameter.id);
-        if (parameter.isRequired && (!result || !result.value.trim())) missing.push(`${item.test.name}: ${parameter.name}`);
+        if (parameter.isRequired && (!result || !String(result.value ?? '').trim())) missing.push(`${item.test.name}: ${parameter.name}`);
         if (result) {
           if (result.verifiedAt) throw new BadRequestException(`Result for ${parameter.name} has already been verified`);
-          resultIds.push(result.id);
+          if (result.id) resultIds.push(result.id);
+          resultKeys.push({ orderItemId: item.id, parameterId: parameter.id });
         }
       }
     }
     if (missing.length) throw new BadRequestException(`Missing required results: ${missing.join(', ')}`);
-    if (!resultIds.length) throw new BadRequestException('No results are available for verification');
+    if (!resultKeys.length) throw new BadRequestException('No results are available for verification');
     const verifiedAt = new Date();
     await this.prisma.$transaction(async (tx) => {
       const locked = await tx.labOrder.updateMany({ where: { id: order.id, labId: currentUser.labId, revision: order.revision, status: OrderStatus.RESULT_ENTERED }, data: { status: OrderStatus.VERIFIED, revision: { increment: 1 } } });
       if (locked.count !== 1) throw new ConflictException('This order changed while you were verifying it. Reload the order and try again.');
-      const verified = await tx.orderResult.updateMany({ where: { id: { in: resultIds }, verifiedAt: null }, data: { verifiedAt, verifiedById: currentUser.id } });
-      if (verified.count !== resultIds.length) throw new ConflictException('One or more results changed while verification is in progress. Reload the order and try again.');
-      await tx.auditLog.create({ data: { labId: currentUser.labId, actorId: currentUser.id, action: AuditAction.VERIFY, entity: 'LabOrderResults', entityId: order.id, metadata: { operation: 'VERIFY_RESULTS', resultCount: resultIds.length, resultIds } });
+      const where = resultIds.length === resultKeys.length
+        ? { id: { in: resultIds }, verifiedAt: null }
+        : { OR: resultKeys.map((key) => ({ orderItemId_parameterId: key })), verifiedAt: null };
+      const verified = await tx.orderResult.updateMany({ where, data: { verifiedAt, verifiedById: currentUser.id } });
+      if (verified.count !== resultKeys.length) throw new ConflictException('One or more results changed while verification is in progress. Reload the order and try again.');
+      await tx.auditLog.create({ data: { labId: currentUser.labId, actorId: currentUser.id, action: AuditAction.VERIFY, entity: 'LabOrderResults', entityId: order.id, metadata: { operation: 'VERIFY_RESULTS', resultCount: resultKeys.length, resultIds: resultIds.length ? resultIds : undefined, resultKeys } });
     });
     if (options.reload === false) return undefined;
     return this.findOne(currentUser, order.id);
