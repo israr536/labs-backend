@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException, Injectable } from '@nestjs/common';
 import { OrderStatus, Prisma } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import { optionalString, requiredString } from '../common/validation';
@@ -97,7 +97,10 @@ export class OrdersService {
     }
     if (shouldFinalize) {
       if (!resultInputs.length) throw new BadRequestException('No report results were provided. Enter at least one result before completing the report.');
-      await this.resultsService.verify(currentUser, order.id, { reload: false });
+      // save() has already loaded the complete order once. Reloading it in verify()
+      // costs another large Neon query, so use the loaded order as the verification source.
+      const verificationOrder = await this.resultsService.getOrderForWorkflow(currentUser, order.id);
+      await this.resultsService.verifyLoaded(currentUser, verificationOrder, { reload: false });
       console.info(`[PERF] complete:verify ${Date.now() - startedAt}ms`);
       const finalized = await this.finalReportsService.finalize(currentUser, order.id);
       console.info(`[PERF] complete:finalize ${Date.now() - startedAt}ms`);
@@ -133,23 +136,7 @@ export class OrdersService {
         },
         select: { id: true, orderNumber: true, status: true, patientId: true },
       });
-
-      // Tests and their parameters were already loaded by resolveForUse().
-      // Reuse that payload instead of performing another nested DB read.
-      return {
-        ...created,
-        items: tests.map((test) => ({
-          id: '',
-          testId: test.id,
-          test: {
-            id: test.id,
-            catalogId: test.catalogId,
-            code: test.code,
-            sampleType: test.sampleType,
-            parameters: test.parameters,
-          },
-        })),
-      };
+      return { ...created, items: tests.map((test) => ({ id: '', testId: test.id, test: { id: test.id, catalogId: test.catalogId, code: test.code, sampleType: test.sampleType, parameters: test.parameters } })) };
     }, { timeout: 10000 });
   }
 
@@ -173,28 +160,10 @@ export class OrdersService {
     if (!items.length) { const exists = await this.prisma.labOrder.findFirst({ where: { id, labId: currentUser.labId }, select: { id: true } }); if (!exists) throw new NotFoundException('Order not found'); }
     const catalogIds = [...new Set(items.map((item) => item.test.catalogId).filter((value): value is string => Boolean(value)))];
     const codes = [...new Set(items.map((item) => item.test.code).filter((value): value is string => Boolean(value)))];
-    const definitions =
-      catalogIds.length || codes.length
-        ? await this.prisma.testDefinition.findMany({
-            where: {
-              isActive: true,
-              OR: [
-                ...(catalogIds.length ? [{ id: { in: catalogIds } }] : []),
-                ...(codes.length ? [{ code: { in: codes } }] : []),
-              ],
-            },
-            include: {
-              parameters: {
-                orderBy: {
-                  displayOrder: 'asc',
-                },
-              },
-            },
-          })
-        : [];
+    const definitions = catalogIds.length || codes.length ? await this.prisma.testDefinition.findMany({ where: { isActive: true, OR: [...(catalogIds.length ? [{ id: { in: catalogIds } }] : []), ...(codes.length ? [{ code: { in: codes } }] : [])] }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } }) : [];
     const definitionById = new Map(definitions.map((definition) => [definition.id, definition]));
     const definitionByCode = new Map(definitions.map((definition) => [definition.code, definition]));
-    const materialize = items.map((item) => { const test = item.test; const definition = (test.catalogId ? definitionById.get(test.catalogId) : undefined) ?? definitionByCode.get(test.code); if (!definition || !definition.parameters.length) return null; const existingNames = new Set(test.parameters.map((parameter) => parameter.name.trim().toLowerCase())); const missing = definition.parameters.filter((parameter) => !existingNames.has(parameter.name.trim().toLowerCase())); return { test, definition, missing }; }).filter((value): value is { test: (typeof items)[number]['test']; definition: (typeof definitions)[number]; missing: (typeof definitions)[number]['parameters'] } => Boolean(value && value.missing.length));
+    const materialize = items.map((item) => { const test = item.test; const definition = (test.catalogId ? definitionById.get(test.catalogId) : undefined) ?? definitionByCode.get(test.code); if (!definition || !definition.parameters.length) return null; const existingNames = new Set(test.parameters.map((parameter) => parameter.name.trim().toLowerCase())); const missing = definition.parameters.filter((parameter) => !existingNames.has(parameter.name.trim().toLowerCase())); return { test, definition, missing }; }).filter((value): value is any => Boolean(value && value.missing.length));
     if (materialize.length) await this.prisma.$transaction(async (tx) => { for (const { test, definition, missing } of materialize) { await tx.testParameter.createMany({ data: missing.map((parameter, index) => ({ testId: test.id, name: parameter.name, inputType: parameter.inputType, unit: parameter.unit ?? null, normalMin: parameter.normalMin ?? null, normalMax: parameter.normalMax ?? null, referenceRange: parameter.referenceRange ?? undefined, options: parameter.options ?? undefined, validation: parameter.validation ?? undefined, criticalLow: parameter.criticalLow ?? null, criticalHigh: parameter.criticalHigh ?? null, decimalPlaces: parameter.decimalPlaces ?? null, defaultValue: parameter.defaultValue ?? null, formula: parameter.formula ?? null, displayOrder: parameter.displayOrder ?? (test.parameters.length + index), isRequired: parameter.isRequired ?? true, remarks: parameter.remarks ?? null })), skipDuplicates: true }); if (!test.catalogId) await tx.test.update({ where: { id: test.id }, data: { catalogId: definition.id } }); } });
     const order = await this.prisma.labOrder.findFirst({ where: { id, labId: currentUser.labId }, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } }, results: true } }, samples: true, createdBy: { select: { id: true, username: true, role: true } } } });
     if (!order) throw new NotFoundException('Order not found');
@@ -205,10 +174,7 @@ export class OrdersService {
     if (!Number.isInteger(skip) || skip < 0) throw new BadRequestException('skip must be >= 0');
     if (!Number.isInteger(take) || take < 1 || take > 100) throw new BadRequestException('take must be between 1 and 100');
     const where: Prisma.LabOrderWhereInput = { labId: currentUser.labId, ...(status ? { status } : {}), ...(search ? { OR: [{ orderNumber: { contains: search, mode: 'insensitive' } }, { patient: { name: { contains: search, mode: 'insensitive' } } }, { patient: { mobile: { contains: search, mode: 'insensitive' } } }] } : {}) };
-    const [total, data] = await Promise.all([
-      this.prisma.labOrder.count({ where }),
-      this.prisma.labOrder.findMany({ where, select: { id: true, orderNumber: true, status: true, createdAt: true, patient: { select: { id: true, name: true, mobile: true } }, items: { select: { id: true, testId: true } } }, orderBy: { createdAt: 'desc' }, skip, take }),
-    ]);
+    const [total, data] = await Promise.all([this.prisma.labOrder.count({ where }), this.prisma.labOrder.findMany({ where, select: { id: true, orderNumber: true, status: true, createdAt: true, patient: { select: { id: true, name: true, mobile: true } }, items: { select: { id: true, testId: true } } }, orderBy: { createdAt: 'desc' }, skip, take })]);
     return { data, pagination: { total, skip, take, page: Math.floor(skip / take) + 1, pages: Math.ceil(total / take) } };
   }
 
