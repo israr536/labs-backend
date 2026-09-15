@@ -49,8 +49,7 @@ export class PatientsService {
   }
 
   async update(currentUser: AuthUser, id: string, body: PatientBody) {
-    await this.findOne(currentUser, id);
-    return this.prisma.patient.update({ where: { id }, data: {
+    const data = {
       name: body.name === undefined ? undefined : requiredString(body.name, 'name'),
       dateOfBirth: body.dateOfBirth === undefined ? undefined : optionalDate(body.dateOfBirth, 'dateOfBirth'),
       age: body.age === undefined ? undefined : optionalInteger(body.age, 'age'),
@@ -58,7 +57,15 @@ export class PatientsService {
       mobile: body.mobile === undefined ? undefined : optionalString(body.mobile, 'mobile'),
       email: body.email === undefined ? undefined : optionalString(body.email, 'email'),
       address: body.address === undefined ? undefined : optionalString(body.address, 'address'),
-    } });
+    };
+
+    const result = await this.prisma.patient.updateMany({
+      where: { id, labId: currentUser.labId },
+      data,
+    });
+    if (result.count !== 1) throw new NotFoundException('Patient not found');
+
+    return this.prisma.patient.findUnique({ where: { id } });
   }
 
   async remove(currentUser: AuthUser, id: string) {
