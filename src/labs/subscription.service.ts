@@ -69,23 +69,39 @@ export class SubscriptionService {
    * in the lab. Keep assertWithinLimit() for general subscription management.
    */
   async assertCanCreateOrder(labId: string, db: PrismaLike = this.prisma) {
+    const startedAt = Date.now();
     const lab = await db.lab.findUnique({
       where: { id: labId },
       select: { subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true },
     });
+    const labLoadedAt = Date.now();
+    console.info(`[PERF] order:subscription-lab ${labLoadedAt - startedAt}ms`);
+
     if (!lab) throw new NotFoundException('Lab not found');
 
     this.assertSubscriptionDates(lab.subscriptionStartAt, lab.subscriptionEndAt);
-    if (!lab.subscriptionPlan) return;
+    if (!lab.subscriptionPlan) {
+      console.info(`[PERF] order:subscription-check ${Date.now() - startedAt}ms plan=none`);
+      return;
+    }
 
     const plan = this.normalizePlan(lab.subscriptionPlan);
     const limit = SUBSCRIPTION_PLANS[plan].maxOrders;
-    if (limit === null) return;
+    if (limit === null) {
+      console.info(`[PERF] order:subscription-check ${Date.now() - startedAt}ms plan=${plan} limit=unlimited`);
+      return;
+    }
 
+    const countStartedAt = Date.now();
     const usage = await db.labOrder.count({ where: { labId } });
+    const countElapsed = Date.now() - countStartedAt;
+    console.info(`[PERF] order:subscription-count ${countElapsed}ms usage=${usage} limit=${limit}`);
+
     if (usage + 1 > limit) {
       throw new ForbiddenException(`orders limit reached for the ${SUBSCRIPTION_PLANS[plan].name} plan`);
     }
+
+    console.info(`[PERF] order:subscription-check ${Date.now() - startedAt}ms plan=${plan}`);
   }
 
   /**
@@ -95,8 +111,11 @@ export class SubscriptionService {
    * adding a usage-counter table or changing the Prisma schema.
    */
   async lockLimit(db: PrismaTransaction, labId: string, resource: UsageResource) {
+    const startedAt = Date.now();
     const lockKey = `${labId}:${resource}`;
     const result = await db.$queryRaw<Array<{ locked: boolean }>>`SELECT pg_try_advisory_xact_lock(hashtext(${lockKey})) AS locked`;
+    const elapsed = Date.now() - startedAt;
+    console.info(`[PERF] order:subscription-lock ${elapsed}ms resource=${resource} locked=${Boolean(result[0]?.locked)}`);
     if (!result[0]?.locked) {
       throw new ConflictException('Another report is being created for this laboratory. Please retry.');
     }
