@@ -52,9 +52,13 @@ export class OrdersService {
           createdById: currentUser.id,
           items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) },
         },
-        include: { parameters: false },
+        include: {
+          patient: true,
+          items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } } } },
+          samples: true,
+        },
       });
-    });
+    }, { timeout: 10000 });
   }
 
   async createCompleteReport(currentUser: AuthUser, body: CompleteReportBody) {
@@ -106,19 +110,17 @@ export class OrdersService {
     const patientId = requiredString(body.patientId, 'patientId');
     if (!Array.isArray(body.testIds) || body.testIds.length === 0) throw new BadRequestException('testIds must contain at least one test');
     const testIds = [...new Set(body.testIds.map((value, index) => requiredString(value, `testIds.${index}`)))];
-    const [patient, tests, lab] = await Promise.all([
-      this.prisma.patient.findFirst({ where: { id: patientId, labId: currentUser.labId } }),
+    const [tests, lab] = await Promise.all([
       this.testsService.resolveForUse(currentUser, testIds),
       this.prisma.lab.findUnique({ where: { id: currentUser.labId }, select: { code: true } }),
     ]);
-    if (!patient) throw new NotFoundException('Patient not found');
     if (tests.length !== testIds.length) throw new BadRequestException('One or more tests are invalid or inactive');
     if (!lab) throw new NotFoundException('Lab not found');
     return this.prisma.$transaction(async (tx) => {
       await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
       await this.subscriptionService.assertCanCreateOrder(currentUser.labId, tx);
       const orderNumber = this.createOrderNumber(currentUser.labId, lab.code);
-      return tx.labOrder.create({
+      const created = await tx.labOrder.create({
         data: {
           labId: currentUser.labId,
           patientId,
@@ -129,28 +131,25 @@ export class OrdersService {
           createdById: currentUser.id,
           items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) },
         },
-        select: {
-          id: true,
-          orderNumber: true,
-          status: true,
-          patientId: true,
-          items: {
-            select: {
-              id: true,
-              testId: true,
-              test: {
-                select: {
-                  id: true,
-                  catalogId: true,
-                  code: true,
-                  sampleType: true,
-                  parameters: { orderBy: { displayOrder: 'asc' } },
-                },
-              },
-            },
-          },
-        },
+        select: { id: true, orderNumber: true, status: true, patientId: true },
       });
+
+      // Tests and their parameters were already loaded by resolveForUse().
+      // Reuse that payload instead of performing another nested DB read.
+      return {
+        ...created,
+        items: tests.map((test) => ({
+          id: '',
+          testId: test.id,
+          test: {
+            id: test.id,
+            catalogId: test.catalogId,
+            code: test.code,
+            sampleType: test.sampleType,
+            parameters: test.parameters,
+          },
+        })),
+      };
     }, { timeout: 10000 });
   }
 
