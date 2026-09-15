@@ -67,16 +67,12 @@ export class OrdersService {
       }
     }
     if (resultInputs.length) {
-      const saved = await this.resultsService.save(currentUser, order.id, { results: resultInputs }, { reload: false }) as any;
+      const saved = await this.resultsService.save(currentUser, order.id, { results: resultInputs }, { reload: false, loadedOrder: { ...order, patient, samples, status: OrderStatus.REGISTERED, results: [] } }) as any;
       console.info(`[PERF] complete:save-results ${Date.now() - startedAt}ms`);
       if (shouldFinalize) {
         if (!saved?.normalized?.length) throw new BadRequestException('No normalized report results were returned.');
         const normalized = saved.normalized as any[];
-        const workflowItems = (order.items as any[]).map((item) => {
-          const itemResult = normalized.find((result) => result.orderItemId === item.id);
-          const orderItemId = itemResult?.orderItemId ?? item.id;
-          return { ...item, id: orderItemId, results: normalized.filter((result) => result.orderItemId === orderItemId).map((result) => ({ ...result, id: undefined, verifiedAt: null })) };
-        });
+        const workflowItems = (order.items as any[]).map((item) => ({ ...item, id: item.id, results: normalized.filter((result) => result.orderItemId === item.id).map((result) => ({ ...result, id: undefined, verifiedAt: null })) }));
         const verificationOrder = { ...order, patient, samples, status: OrderStatus.RESULT_ENTERED, revision: ((order as any).revision ?? 1) + 1, items: workflowItems };
         await this.resultsService.verifyLoaded(currentUser, verificationOrder, { reload: false });
         console.info(`[PERF] complete:verify ${Date.now() - startedAt}ms`);
@@ -102,8 +98,9 @@ export class OrdersService {
       await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
       await this.subscriptionService.assertCanCreateOrder(currentUser.labId, tx);
       const orderNumber = this.createOrderNumber(currentUser.labId, lab.code);
-      const created = await tx.labOrder.create({ data: { labId: currentUser.labId, patientId, orderNumber, status: OrderStatus.REGISTERED, referredBy: optionalString(body.referredBy, 'referredBy'), clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'), createdById: currentUser.id, items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) } }, select: { id: true, orderNumber: true, status: true, patientId: true, revision: true } });
-      return { ...created, lab, items: tests.map((test) => ({ id: '', testId: test.id, test: { id: test.id, catalogId: test.catalogId, code: test.code, name: test.name, category: test.category, department: test.department, sampleType: test.sampleType, method: test.method, remarks: test.remarks, parameters: test.parameters } })) };
+      const created = await tx.labOrder.create({ data: { labId: currentUser.labId, patientId, orderNumber, status: OrderStatus.REGISTERED, referredBy: optionalString(body.referredBy, 'referredBy'), clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'), createdById: currentUser.id, items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) } }, select: { id: true, orderNumber: true, status: true, patientId: true, revision: true, items: { select: { id: true, testId: true } } } });
+      const itemIdByTestId = new Map(created.items.map((item) => [item.testId, item.id]));
+      return { ...created, lab, items: tests.map((test) => ({ id: itemIdByTestId.get(test.id) ?? '', testId: test.id, test: { id: test.id, catalogId: test.catalogId, code: test.code, name: test.name, category: test.category, department: test.department, sampleType: test.sampleType, method: test.method, remarks: test.remarks, parameters: test.parameters }, results: [] })) };
     }, { timeout: 10000 });
   }
 
