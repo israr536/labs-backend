@@ -92,26 +92,42 @@ export class OrdersService {
       }
     }
     if (resultInputs.length) {
-      await this.resultsService.save(currentUser, order.id, { results: resultInputs }, { reload: false });
+      const saved = await this.resultsService.save(currentUser, order.id, { results: resultInputs }, { reload: false }) as any;
       console.info(`[PERF] complete:save-results ${Date.now() - startedAt}ms`);
-    }
-    if (shouldFinalize) {
-      if (!resultInputs.length) throw new BadRequestException('No report results were provided. Enter at least one result before completing the report.');
-      // save() has already loaded the complete order once. Reloading it in verify()
-      // costs another large Neon query, so use the loaded order as the verification source.
-      const verificationOrder = await this.resultsService.getOrderForWorkflow(currentUser, order.id);
-      await this.resultsService.verifyLoaded(currentUser, verificationOrder, { reload: false });
-      console.info(`[PERF] complete:verify ${Date.now() - startedAt}ms`);
-      // verifyLoaded changes the persisted order status to VERIFIED. Reuse the
-      // already-loaded order for finalization and carry forward the lab that was
-      // already fetched by createFastCompleteOrder.
-      const finalized = await this.finalReportsService.finalize(
-        currentUser,
-        order.id,
-        { ...verificationOrder, status: OrderStatus.VERIFIED, lab: (order as any).lab },
-      );
-      console.info(`[PERF] complete:finalize ${Date.now() - startedAt}ms`);
-      return finalized;
+      if (shouldFinalize) {
+        if (!saved?.normalized?.length) throw new BadRequestException('No normalized report results were returned.');
+        const normalized = saved.normalized as any[];
+        const workflowItems = (order.items as any[]).map((item) => {
+          const itemResult = normalized.find((result) => result.orderItemId === item.id);
+          const orderItemId = itemResult?.orderItemId ?? item.id;
+          return {
+            ...item,
+            id: orderItemId,
+            results: normalized.filter((result) => result.orderItemId === orderItemId).map((result) => ({
+              ...result,
+              id: undefined,
+              verifiedAt: null,
+            })),
+          };
+        });
+        const verificationOrder = {
+          ...order,
+          patient,
+          samples,
+          status: OrderStatus.RESULT_ENTERED,
+          revision: (order as any).revision ?? 1,
+          items: workflowItems,
+        };
+        await this.resultsService.verifyLoaded(currentUser, verificationOrder, { reload: false });
+        console.info(`[PERF] complete:verify ${Date.now() - startedAt}ms`);
+        const finalized = await this.finalReportsService.finalize(
+          currentUser,
+          order.id,
+          { ...verificationOrder, status: OrderStatus.VERIFIED, lab: (order as any).lab },
+        );
+        console.info(`[PERF] complete:finalize ${Date.now() - startedAt}ms`);
+        return finalized;
+      }
     }
     return this.resultsService.findOne(currentUser, order.id);
   }
@@ -124,15 +140,7 @@ export class OrdersService {
       this.testsService.resolveForUse(currentUser, testIds),
       this.prisma.lab.findUnique({
         where: { id: currentUser.labId },
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          mobile: true,
-          email: true,
-          address: true,
-          icon: true,
-        },
+        select: { id: true, code: true, name: true, mobile: true, email: true, address: true, icon: true },
       }),
     ]);
     if (tests.length !== testIds.length) throw new BadRequestException('One or more tests are invalid or inactive');
@@ -152,7 +160,7 @@ export class OrdersService {
           createdById: currentUser.id,
           items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) },
         },
-        select: { id: true, orderNumber: true, status: true, patientId: true },
+        select: { id: true, orderNumber: true, status: true, patientId: true, revision: true },
       });
       return {
         ...created,
@@ -164,7 +172,12 @@ export class OrdersService {
             id: test.id,
             catalogId: test.catalogId,
             code: test.code,
+            name: test.name,
+            category: test.category,
+            department: test.department,
             sampleType: test.sampleType,
+            method: test.method,
+            remarks: test.remarks,
             parameters: test.parameters,
           },
         })),
