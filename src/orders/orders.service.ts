@@ -40,7 +40,7 @@ export class OrdersService {
     return this.prisma.$transaction(async (tx) => {
       await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
       await this.subscriptionService.assertWithinLimit(currentUser.labId, 'orders', 1, tx);
-      const orderNumber = await this.createOrderNumber(tx, currentUser.labId, lab.code);
+      const orderNumber = this.createOrderNumber(currentUser.labId, lab.code);
       return tx.labOrder.create({
         data: {
           labId: currentUser.labId,
@@ -52,13 +52,9 @@ export class OrdersService {
           createdById: currentUser.id,
           items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) },
         },
-        include: {
-          patient: true,
-          items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } } } },
-          samples: true,
-        },
+        include: { parameters: false },
       });
-    }, { timeout: 10000 });
+    });
   }
 
   async createCompleteReport(currentUser: AuthUser, body: CompleteReportBody) {
@@ -121,7 +117,7 @@ export class OrdersService {
     return this.prisma.$transaction(async (tx) => {
       await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
       await this.subscriptionService.assertCanCreateOrder(currentUser.labId, tx);
-      const orderNumber = await this.createOrderNumber(tx, currentUser.labId, lab.code);
+      const orderNumber = this.createOrderNumber(currentUser.labId, lab.code);
       return tx.labOrder.create({
         data: {
           labId: currentUser.labId,
@@ -133,10 +129,26 @@ export class OrdersService {
           createdById: currentUser.id,
           items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) },
         },
-        include: {
-          patient: true,
-          items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } } } },
-          samples: true,
+        select: {
+          id: true,
+          orderNumber: true,
+          status: true,
+          patientId: true,
+          items: {
+            select: {
+              id: true,
+              testId: true,
+              test: {
+                select: {
+                  id: true,
+                  catalogId: true,
+                  code: true,
+                  sampleType: true,
+                  parameters: { orderBy: { displayOrder: 'asc' } },
+                },
+              },
+            },
+          },
         },
       });
     }, { timeout: 10000 });
@@ -201,9 +213,9 @@ export class OrdersService {
     return { data, pagination: { total, skip, take, page: Math.floor(skip / take) + 1, pages: Math.ceil(total / take) } };
   }
 
-  private async createOrderNumber(tx: Prisma.TransactionClient, labId: string, labCode: string) {
+  private createOrderNumber(labId: string, labCode: string) {
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    for (let attempt = 0; attempt < 5; attempt += 1) { const suffix = Math.floor(100000 + Math.random() * 900000); const candidate = `${labCode}-ORD-${date}-${suffix}`; const exists = await tx.labOrder.findFirst({ where: { labId, orderNumber: candidate }, select: { id: true } }); if (!exists) return candidate; }
-    throw new BadRequestException('Unable to allocate a unique order number');
+    const suffix = Math.floor(100000 + Math.random() * 900000);
+    return `${labCode}-ORD-${date}-${suffix}`;
   }
 }
