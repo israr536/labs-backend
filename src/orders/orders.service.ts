@@ -103,12 +103,12 @@ export class OrdersService {
       await this.resultsService.verifyLoaded(currentUser, verificationOrder, { reload: false });
       console.info(`[PERF] complete:verify ${Date.now() - startedAt}ms`);
       // verifyLoaded changes the persisted order status to VERIFIED. Reuse the
-      // already-loaded order for finalization instead of issuing another large
-      // patient + samples + items + parameters + results query.
+      // already-loaded order for finalization and carry forward the lab that was
+      // already fetched by createFastCompleteOrder.
       const finalized = await this.finalReportsService.finalize(
         currentUser,
         order.id,
-        { ...verificationOrder, status: OrderStatus.VERIFIED },
+        { ...verificationOrder, status: OrderStatus.VERIFIED, lab: (order as any).lab },
       );
       console.info(`[PERF] complete:finalize ${Date.now() - startedAt}ms`);
       return finalized;
@@ -122,7 +122,18 @@ export class OrdersService {
     const testIds = [...new Set(body.testIds.map((value, index) => requiredString(value, `testIds.${index}`)))];
     const [tests, lab] = await Promise.all([
       this.testsService.resolveForUse(currentUser, testIds),
-      this.prisma.lab.findUnique({ where: { id: currentUser.labId }, select: { code: true } }),
+      this.prisma.lab.findUnique({
+        where: { id: currentUser.labId },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          mobile: true,
+          email: true,
+          address: true,
+          icon: true,
+        },
+      }),
     ]);
     if (tests.length !== testIds.length) throw new BadRequestException('One or more tests are invalid or inactive');
     if (!lab) throw new NotFoundException('Lab not found');
@@ -143,7 +154,21 @@ export class OrdersService {
         },
         select: { id: true, orderNumber: true, status: true, patientId: true },
       });
-      return { ...created, items: tests.map((test) => ({ id: '', testId: test.id, test: { id: test.id, catalogId: test.catalogId, code: test.code, sampleType: test.sampleType, parameters: test.parameters } })) };
+      return {
+        ...created,
+        lab,
+        items: tests.map((test) => ({
+          id: '',
+          testId: test.id,
+          test: {
+            id: test.id,
+            catalogId: test.catalogId,
+            code: test.code,
+            sampleType: test.sampleType,
+            parameters: test.parameters,
+          },
+        })),
+      };
     }, { timeout: 10000 });
   }
 
