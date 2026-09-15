@@ -51,7 +51,9 @@ export class FinalReportsService {
       );
     }
 
-    const lab = await this.prisma.lab.findUnique({
+    // createFastCompleteOrder already loaded the lab needed for the report.
+    // Reuse it during the hot path instead of issuing another Neon query.
+    const lab = order.lab ?? (await this.prisma.lab.findUnique({
       where: { id: currentUser.labId },
       select: {
         id: true,
@@ -62,11 +64,14 @@ export class FinalReportsService {
         address: true,
         icon: true,
       },
-    });
+    }));
     if (!lab) throw new NotFoundException('Lab not found');
 
     const finalizedAt = new Date();
-    const reportNumber = await this.createReportNumber(lab.code);
+    // The database already enforces reportNumber uniqueness. Generate a
+    // collision-resistant identifier locally so finalization does not perform
+    // an extra findUnique round trip on every report.
+    const reportNumber = this.createReportNumber(lab.code);
     const snapshot = this.buildSnapshot(lab, order, finalizedAt);
 
     const report = await this.prisma.$transaction(async (tx) => {
@@ -482,16 +487,10 @@ export class FinalReportsService {
     };
   }
 
-  private async createReportNumber(labCode: string): Promise<string> {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
-      const random = Math.random().toString(36).slice(2, 8).toUpperCase();
-      const reportNumber = `${labCode}-R-${timestamp}-${random}`;
-      if (!(await this.prisma.finalReport.findUnique({ where: { reportNumber }, select: { id: true } }))) {
-        return reportNumber;
-      }
-    }
-    throw new BadRequestException('Unable to allocate unique report number');
+  private createReportNumber(labCode: string): string {
+    const timestamp = Date.now().toString(36).toUpperCase();
+    const random = Math.random().toString(36).slice(2, 10).toUpperCase();
+    return `${labCode}-R-${timestamp}-${random}`;
   }
 
   private async getOrder(currentUser: AuthUser, orderId: string) {
