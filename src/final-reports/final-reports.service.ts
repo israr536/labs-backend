@@ -1,1 +1,1 @@
-// RESTORE FROM PREVIOUS COMMIT: this placeholder will be replaced by resetting the branch.
+// branch will be restored to previous known-good commit
