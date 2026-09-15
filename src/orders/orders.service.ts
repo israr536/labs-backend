@@ -90,7 +90,7 @@ export class OrdersService {
     const testIds = [...new Set(body.testIds.map((value, index) => requiredString(value, `testIds.${index}`)))];
     const [actualTests, lab] = await Promise.all([
       this.prisma.test.findMany({
-        where: { id: { in: testIds }, labId: currentUser.labId },
+        where: { id: { in: testIds }, labId: currentUser.labId, isActive: true },
         select: {
           id: true,
           catalogId: true,
@@ -131,8 +131,12 @@ export class OrdersService {
     const actualById = new Map(actualTests.map((test) => [test.id, test]));
     const missingIds = testIds.filter((id) => !actualById.has(id));
     const fallbackTests = missingIds.length ? await this.testsService.resolveForUse(currentUser, missingIds) : [];
-    const fallbackById = new Map(fallbackTests.map((test) => [test.id, test]));
-    const tests = testIds.map((id) => actualById.get(id) ?? fallbackById.get(id)).filter(Boolean) as any[];
+    const fallbackByRequestedId = new Map<string, any>();
+    for (let index = 0; index < missingIds.length; index += 1) {
+      const resolved = fallbackTests[index];
+      if (resolved) fallbackByRequestedId.set(missingIds[index], resolved);
+    }
+    const tests = testIds.map((id) => actualById.get(id) ?? fallbackByRequestedId.get(id)).filter(Boolean) as any[];
     if (tests.length !== testIds.length) throw new BadRequestException('One or more tests are invalid or inactive');
     if (!lab) throw new NotFoundException('Lab not found');
     return this.prisma.$transaction(async (tx) => {
