@@ -34,12 +34,19 @@ export class PatientsService {
     return { count: await this.prisma.patient.count({ where: { labId: currentUser.labId } }) };
   }
 
-  findAll(currentUser: AuthUser, search?: string) {
-    return this.prisma.patient.findMany({ where: { labId: currentUser.labId, ...(search ? { OR: [
+  findAll(currentUser: AuthUser, search?: string, limitValue?: string) {
+    const parsedLimit = limitValue === undefined ? 100 : Number(limitValue);
+    const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 100;
+    return this.prisma.patient.findMany({
+      where: { labId: currentUser.labId, ...(search ? { OR: [
       { name: { contains: search, mode: 'insensitive' as const } },
       { mobile: { contains: search, mode: 'insensitive' as const } },
       { email: { contains: search, mode: 'insensitive' as const } },
-    ] } : {}) }, orderBy: { createdAt: 'desc' } });
+    ] } : {}) },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      select: { id: true, name: true, dateOfBirth: true, age: true, gender: true, mobile: true, email: true, address: true, createdAt: true, updatedAt: true },
+    });
   }
 
   async findOne(currentUser: AuthUser, id: string) {

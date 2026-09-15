@@ -142,6 +142,7 @@ model Patient {
   orders  LabOrder[]
 
   @@index([labId])
+  @@index([labId, createdAt])
 }
 
 model TestDefinition {
@@ -359,6 +360,7 @@ model LabOrder {
   @@unique([labId, orderNumber])
   @@index([labId, patientId, createdAt])
   @@index([labId, status, createdAt])
+  @@index([labId, createdAt])
 }
 
 model OrderItem {

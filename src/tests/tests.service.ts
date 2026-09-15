@@ -197,6 +197,10 @@ export class TestsService {
     return result.sort((left, right) => `${left.category ?? ''}:${left.name}`.localeCompare(`${right.category ?? ''}:${right.name}`));
   }
 
+  async reportEntryCatalog(currentUser: AuthUser) {
+    return this.findAll(currentUser);
+  }
+
   async findOne(currentUser: AuthUser, id: string) {
     const actual = await this.findActual(currentUser, id);
     if (actual) return actual;

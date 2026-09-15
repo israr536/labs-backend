@@ -34,6 +34,8 @@ export class OrdersController {
     @Query('take') take?: string,
     @Query('search') search?: string,
     @Query('status') status?: string,
+    @Query('patientId') patientId?: string,
+    @Query('testId') testId?: string,
   ) {
     const parsedLimit = limit !== undefined ? Number(limit) : take !== undefined ? Number(take) : 20;
     const parsedPage = page === undefined ? 1 : Number(page);
@@ -42,7 +44,7 @@ export class OrdersController {
     if (normalizedStatus && !Object.values(OrderStatus).includes(normalizedStatus as OrderStatus)) {
       throw new BadRequestException(`Invalid order status: ${normalizedStatus}`);
     }
-    return this.ordersService.findAll(user, parsedSkip, parsedLimit, search?.trim() || undefined, normalizedStatus as OrderStatus | undefined);
+    return this.ordersService.findAll(user, parsedSkip, parsedLimit, search?.trim() || undefined, normalizedStatus as OrderStatus | undefined, patientId?.trim() || undefined, testId?.trim() || undefined);
   }
 
   @Get(':id')

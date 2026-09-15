@@ -9,11 +9,16 @@ export class DashboardService {
 
   async summary(currentUser: AuthUser) {
     const labId = currentUser.labId;
-    const [totalPatients, totalReports, completedReports, pendingReports, criticalRows] = await Promise.all([
+    const [totalPatients, orderCounts, criticalRows] = await Promise.all([
       this.prisma.patient.count({ where: { labId } }),
-      this.prisma.labOrder.count({ where: { labId } }),
-      this.prisma.labOrder.count({ where: { labId, status: OrderStatus.FINAL } }),
-      this.prisma.labOrder.count({ where: { labId, status: { notIn: [OrderStatus.FINAL, OrderStatus.CANCELLED] } } }),
+      this.prisma.$queryRaw<Array<{ totalReports: bigint; completedReports: bigint; pendingReports: bigint }>>(Prisma.sql`
+        SELECT
+          COUNT(*)::bigint AS "totalReports",
+          COUNT(*) FILTER (WHERE "status" = ${OrderStatus.FINAL}::"OrderStatus")::bigint AS "completedReports",
+          COUNT(*) FILTER (WHERE "status" NOT IN (${OrderStatus.FINAL}::"OrderStatus", ${OrderStatus.CANCELLED}::"OrderStatus"))::bigint AS "pendingReports"
+        FROM "LabOrder"
+        WHERE "labId" = ${labId}::uuid
+      `),
       this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
         SELECT COUNT(*)::bigint AS count
         FROM "CriticalResult"
@@ -25,9 +30,9 @@ export class DashboardService {
 
     return {
       totalPatients,
-      totalReports,
-      completedReports,
-      pendingReports,
+      totalReports: Number(orderCounts[0]?.totalReports ?? 0),
+      completedReports: Number(orderCounts[0]?.completedReports ?? 0),
+      pendingReports: Number(orderCounts[0]?.pendingReports ?? 0),
       criticalReports: Number(criticalRows[0]?.count ?? 0),
     };
   }

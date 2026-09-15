@@ -34,8 +34,8 @@ export class PatientsController {
   }
 
   @Get()
-  findAll(@CurrentUser() user: AuthUser, @Query('search') search?: string) {
-    return this.patientsService.findAll(user, search);
+  findAll(@CurrentUser() user: AuthUser, @Query('search') search?: string, @Query('limit') limit?: string) {
+    return this.patientsService.findAll(user, search, limit);
   }
 
   @Get(':id')

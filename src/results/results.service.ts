@@ -58,11 +58,47 @@ export class ResultsService {
     const write = async (tx: Prisma.TransactionClient) => {
       const locked = await tx.labOrder.updateMany({ where: { id: order.id, labId: currentUser.labId, revision, status: { notIn: lockedStatuses } }, data: { revision: { increment: 1 }, status: OrderStatus.RESULT_ENTERED } });
       if (locked.count !== 1) throw new ConflictException('This order was updated by another user. Reload the order and try again.');
-      const allNew = normalized.length > 0 && createdParameterIds.length === normalized.length;
-      if (allNew) {
-        await tx.orderResult.createMany({ data: normalized.map((result) => ({ orderItemId: result.orderItemId, parameterId: result.parameterId, sampleId: result.sampleId ?? null, value: result.value, flag: result.flag, referenceRangeId: result.referenceRangeId, referenceRangeSnapshot: result.referenceRangeSnapshot ?? Prisma.JsonNull })) });
-      } else {
-        for (const result of normalized) await tx.orderResult.upsert({ where: { orderItemId_parameterId: { orderItemId: result.orderItemId, parameterId: result.parameterId } }, create: { orderItemId: result.orderItemId, parameterId: result.parameterId, sampleId: result.sampleId, value: result.value, flag: result.flag, referenceRangeId: result.referenceRangeId, referenceRangeSnapshot: result.referenceRangeSnapshot ?? Prisma.JsonNull }, update: { value: result.value, flag: result.flag, sampleId: result.sampleId, verifiedAt: null, verifiedById: null, referenceRangeId: result.referenceRangeId, referenceRangeSnapshot: result.referenceRangeSnapshot ?? Prisma.JsonNull } });
+      if (normalized.length) {
+        const payload = JSON.stringify(normalized.map((result) => ({
+          orderItemId: result.orderItemId,
+          parameterId: result.parameterId,
+          sampleId: result.sampleId ?? null,
+          value: result.value,
+          flag: result.flag ?? null,
+          referenceRangeId: result.referenceRangeId ?? null,
+          referenceRangeSnapshot: result.referenceRangeSnapshot ?? null,
+        })));
+        await tx.$executeRaw(Prisma.sql`
+          WITH input AS (
+            SELECT *
+            FROM jsonb_to_recordset(${payload}::jsonb) AS rows(
+              "orderItemId" text,
+              "parameterId" text,
+              "sampleId" text,
+              "value" text,
+              "flag" text,
+              "referenceRangeId" text,
+              "referenceRangeSnapshot" jsonb
+            )
+          )
+          INSERT INTO "OrderResult" (
+            "id", "orderItemId", "parameterId", "sampleId", "value", "flag",
+            "referenceRangeId", "referenceRangeSnapshot", "createdAt", "updatedAt"
+          )
+          SELECT gen_random_uuid(), "orderItemId", "parameterId", "sampleId",
+                 "value", "flag"::"ResultFlag", "referenceRangeId",
+                 "referenceRangeSnapshot", CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+          FROM input
+          ON CONFLICT ("orderItemId", "parameterId") DO UPDATE SET
+            "sampleId" = EXCLUDED."sampleId",
+            "value" = EXCLUDED."value",
+            "flag" = EXCLUDED."flag",
+            "verifiedAt" = NULL,
+            "verifiedById" = NULL,
+            "referenceRangeId" = EXCLUDED."referenceRangeId",
+            "referenceRangeSnapshot" = EXCLUDED."referenceRangeSnapshot",
+            "updatedAt" = CURRENT_TIMESTAMP
+        `);
       }
     };
     if (options.tx) await write(options.tx); else await this.prisma.$transaction(write);

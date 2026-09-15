@@ -191,10 +191,16 @@ export class OrdersService {
     return { ...order, results: order.items.flatMap((item) => item.results) };
   }
 
-  async findAll(currentUser: AuthUser, skip = 0, take = 20, search?: string, status?: OrderStatus) {
+  async findAll(currentUser: AuthUser, skip = 0, take = 20, search?: string, status?: OrderStatus, patientId?: string, testId?: string) {
     if (!Number.isInteger(skip) || skip < 0) throw new BadRequestException('skip must be >= 0');
     if (!Number.isInteger(take) || take < 1 || take > 100) throw new BadRequestException('take must be between 1 and 100');
-    const where: Prisma.LabOrderWhereInput = { labId: currentUser.labId, ...(status ? { status } : {}), ...(search ? { OR: [{ orderNumber: { contains: search, mode: 'insensitive' } }, { patient: { name: { contains: search, mode: 'insensitive' } } }, { patient: { mobile: { contains: search, mode: 'insensitive' } } }] } : {}) };
+    const where: Prisma.LabOrderWhereInput = {
+      labId: currentUser.labId,
+      ...(status ? { status } : {}),
+      ...(patientId ? { patientId } : {}),
+      ...(testId ? { items: { some: { testId } } } : {}),
+      ...(search ? { OR: [{ orderNumber: { contains: search, mode: 'insensitive' } }, { patient: { name: { contains: search, mode: 'insensitive' } } }, { patient: { mobile: { contains: search, mode: 'insensitive' } } }] } : {}),
+    };
     const [total, data] = await Promise.all([this.prisma.labOrder.count({ where }), this.prisma.labOrder.findMany({ where, select: { id: true, orderNumber: true, status: true, createdAt: true, patient: { select: { id: true, name: true, mobile: true } }, items: { select: { id: true, testId: true } } }, orderBy: { createdAt: 'desc' }, skip, take })]);
     return { data, pagination: { total, skip, take, page: Math.floor(skip / take) + 1, pages: Math.ceil(total / take) } };
   }
