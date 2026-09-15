@@ -14,16 +14,16 @@ type ValidationRules = { min?: number; max?: number; minLength?: number; maxLeng
 export class ResultsService {
   constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
 
-  async save(currentUser: AuthUser, orderId: string, body: ResultsBody = {}, options: { reload?: boolean } = {}) {
+  async save(currentUser: AuthUser, orderId: string, body: ResultsBody = {}, options: { reload?: boolean; loadedOrder?: any } = {}) {
     const inputs = arrayValue<ResultInput>(body.results ?? [], 'results');
-    const order = await this.getOrder(currentUser, orderId);
+    const order = options.loadedOrder ?? (await this.getOrder(currentUser, orderId));
     const lockedStatuses: OrderStatus[] = [OrderStatus.CANCELLED, OrderStatus.FINAL, OrderStatus.VERIFIED];
     if (lockedStatuses.includes(order.status)) throw new BadRequestException('Results cannot be edited after verification or finalization');
     if (!inputs.length) throw new BadRequestException('At least one result is required');
     const items = order.items.flatMap((item) => item.test.parameters.map((parameter) => ({ item, parameter })));
     const byParameter = new Map(items.map(({ parameter, item }) => [parameter.id, { parameter, item }]));
-    const samplesById = new Map(order.samples.map((sample) => [sample.id, sample]));
-    const existingByParameter = new Map(order.items.flatMap((item) => item.results.map((result) => [result.parameterId, result] as const)));
+    const samplesById = new Map((order.samples ?? []).map((sample) => [sample.id, sample]));
+    const existingByParameter = new Map(order.items.flatMap((item) => (item.results ?? []).map((result) => [result.parameterId, result] as const)));
     const seen = new Set<string>();
     const createdParameterIds: string[] = [];
     const changedParameterIds: string[] = [];
@@ -53,15 +53,18 @@ export class ResultsService {
       const range = item.value ? ranges.get(item.parameterId) ?? null : null;
       return { orderItemId: item.orderItemId, parameterId: item.parameterId, sampleId: item.sampleId, value: item.value, flag: item.value ? this.calculateFlag(item.parameter, item.value, range) : undefined, referenceRangeId: range?.id ?? null, referenceRangeSnapshot: range ? { id: range.id, version: range.version, gender: range.gender, ageMinYears: range.ageMinYears, ageMaxYears: range.ageMaxYears, method: range.method, analyzer: range.analyzer, low: range.low, high: range.high, displayRange: range.displayRange, unit: range.unit, effectiveFrom: range.effectiveFrom, effectiveTo: range.effectiveTo } : null };
     });
+    const revision = order.revision ?? 0;
     await this.prisma.$transaction(async (tx) => {
-      const locked = await tx.labOrder.updateMany({ where: { id: order.id, labId: currentUser.labId, revision: order.revision, status: { notIn: lockedStatuses } }, data: { revision: { increment: 1 } } });
+      const locked = await tx.labOrder.updateMany({ where: { id: order.id, labId: currentUser.labId, revision, status: { notIn: lockedStatuses } }, data: { revision: { increment: 1 }, status: OrderStatus.RESULT_ENTERED } });
       if (locked.count !== 1) throw new ConflictException('This order was updated by another user. Reload the order and try again.');
       const allNew = normalized.length > 0 && createdParameterIds.length === normalized.length;
-      if (allNew) await tx.orderResult.createMany({ data: normalized.map((result) => ({ orderItemId: result.orderItemId, parameterId: result.parameterId, sampleId: result.sampleId ?? null, value: result.value, flag: result.flag, referenceRangeId: result.referenceRangeId, referenceRangeSnapshot: result.referenceRangeSnapshot ?? Prisma.JsonNull })) });
-      else for (const result of normalized) await tx.orderResult.upsert({ where: { orderItemId_parameterId: { orderItemId: result.orderItemId, parameterId: result.parameterId } }, create: { orderItemId: result.orderItemId, parameterId: result.parameterId, sampleId: result.sampleId, value: result.value, flag: result.flag, referenceRangeId: result.referenceRangeId, referenceRangeSnapshot: result.referenceRangeSnapshot ?? Prisma.JsonNull }, update: { value: result.value, flag: result.flag, sampleId: result.sampleId, verifiedAt: null, verifiedById: null, referenceRangeId: result.referenceRangeId, referenceRangeSnapshot: result.referenceRangeSnapshot ?? Prisma.JsonNull } });
-      await tx.labOrder.update({ where: { id: order.id }, data: { status: OrderStatus.RESULT_ENTERED } });
-      await tx.auditLog.create({ data: { labId: currentUser.labId, actorId: currentUser.id, action: AuditAction.UPDATE, entity: 'LabOrderResults', entityId: order.id, metadata: { operation: 'SAVE_RESULTS', orderRevision: order.revision + 1, createdCount: createdParameterIds.length, updatedCount: changedParameterIds.length, createdParameterIds, updatedParameterIds: changedParameterIds } });
+      if (allNew) {
+        await tx.orderResult.createMany({ data: normalized.map((result) => ({ orderItemId: result.orderItemId, parameterId: result.parameterId, sampleId: result.sampleId ?? null, value: result.value, flag: result.flag, referenceRangeId: result.referenceRangeId, referenceRangeSnapshot: result.referenceRangeSnapshot ?? Prisma.JsonNull })) });
+      } else {
+        for (const result of normalized) await tx.orderResult.upsert({ where: { orderItemId_parameterId: { orderItemId: result.orderItemId, parameterId: result.parameterId } }, create: { orderItemId: result.orderItemId, parameterId: result.parameterId, sampleId: result.sampleId, value: result.value, flag: result.flag, referenceRangeId: result.referenceRangeId, referenceRangeSnapshot: result.referenceRangeSnapshot ?? Prisma.JsonNull }, update: { value: result.value, flag: result.flag, sampleId: result.sampleId, verifiedAt: null, verifiedById: null, referenceRangeId: result.referenceRangeId, referenceRangeSnapshot: result.referenceRangeSnapshot ?? Prisma.JsonNull } });
+      }
     });
+    await this.audit.record(currentUser, AuditAction.UPDATE, 'LabOrderResults', order.id, { operation: 'SAVE_RESULTS', orderRevision: revision + 1, createdCount: createdParameterIds.length, updatedCount: changedParameterIds.length, createdParameterIds, updatedParameterIds: changedParameterIds });
     if (options.reload === false) return { normalized };
     return this.findOne(currentUser, orderId);
   }
@@ -80,7 +83,7 @@ export class ResultsService {
     const resultIds: string[] = [];
     const resultKeys: Array<{ orderItemId: string; parameterId: string }> = [];
     for (const item of order.items) {
-      const resultsByParameter = new Map(item.results.map((row) => [row.parameterId, row]));
+      const resultsByParameter = new Map((item.results ?? []).map((row) => [row.parameterId, row]));
       for (const parameter of item.test.parameters) {
         const result = resultsByParameter.get(parameter.id);
         if (parameter.isRequired && (!result || !String(result.value ?? '').trim())) missing.push(`${item.test.name}: ${parameter.name}`);
@@ -97,13 +100,11 @@ export class ResultsService {
     await this.prisma.$transaction(async (tx) => {
       const locked = await tx.labOrder.updateMany({ where: { id: order.id, labId: currentUser.labId, revision: order.revision, status: OrderStatus.RESULT_ENTERED }, data: { status: OrderStatus.VERIFIED, revision: { increment: 1 } } });
       if (locked.count !== 1) throw new ConflictException('This order changed while you were verifying it. Reload the order and try again.');
-      const resultWhere = resultIds.length === resultKeys.length
-        ? { id: { in: resultIds }, verifiedAt: null }
-        : { OR: resultKeys.map((key) => ({ orderItemId: key.orderItemId, parameterId: key.parameterId })), verifiedAt: null };
+      const resultWhere = resultIds.length === resultKeys.length ? { id: { in: resultIds }, verifiedAt: null } : { OR: resultKeys.map((key) => ({ orderItemId: key.orderItemId, parameterId: key.parameterId })), verifiedAt: null };
       const verified = await tx.orderResult.updateMany({ where: resultWhere, data: { verifiedAt, verifiedById: currentUser.id } });
       if (verified.count !== resultKeys.length) throw new ConflictException('One or more results changed while verification is in progress. Reload the order and try again.');
-      await tx.auditLog.create({ data: { labId: currentUser.labId, actorId: currentUser.id, action: AuditAction.VERIFY, entity: 'LabOrderResults', entityId: order.id, metadata: { operation: 'VERIFY_RESULTS', resultCount: resultKeys.length, resultIds, resultKeys } });
     });
+    await this.audit.record(currentUser, AuditAction.VERIFY, 'LabOrderResults', order.id, { operation: 'VERIFY_RESULTS', resultCount: resultKeys.length, resultIds, resultKeys });
     if (options.reload === false) return undefined;
     return this.findOne(currentUser, order.id);
   }
