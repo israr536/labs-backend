@@ -123,12 +123,8 @@ export class SamplesService {
       receivedAt: status === SampleStatus.COMPLETED ? now : undefined,
     }));
 
-    await tx.sample.createMany({ data });
-    const accessionNumbers = data.map((item) => item.accessionNumber);
-    return tx.sample.findMany({
-      where: { labId, orderId, accessionNumber: { in: accessionNumbers } },
-      orderBy: { createdAt: 'asc' },
-    });
+    const samples = await tx.sample.createManyAndReturn({ data });
+    return samples;
   }
 
   private createAccessionNumber() {
