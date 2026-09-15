@@ -1,5 +1,5 @@
 import { BadRequestException, NotFoundException, Injectable } from '@nestjs/common';
-import { OrderStatus, Prisma } from '@prisma/client';
+import { AuditAction, OrderStatus, Prisma } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import { optionalString, requiredString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
@@ -42,19 +42,17 @@ export class OrdersService {
     const requestedStatus = typeof body.status === 'string' ? body.status.trim() : '';
     const shouldFinalize = requestedStatus === 'Completed' || requestedStatus === 'Critical';
     if (shouldFinalize && currentUser.role !== 'ADMIN' && currentUser.role !== 'TECHNICIAN') throw new BadRequestException('Only an administrator or technician can complete and finalize a report');
+
     const patient = await this.resolvePatient(currentUser, body);
     const testIds = this.normalizeTestIds(body.testIds);
     if (!testIds.length) throw new BadRequestException('Please select at least one configured laboratory test.');
-    const order = await this.createFastCompleteOrder(currentUser, { patientId: patient.id, testIds, referredBy: body.referredBy, clinicalNotes: body.clinicalNotes });
-    console.info(`[PERF] complete:create-order ${Date.now() - startedAt}ms`);
-    const specimenTypes = [...new Set((order.items as any[]).map((item) => item.test?.sampleType?.trim()).filter(Boolean))] as string[];
-    const samples = await this.samplesService.createCompletedForOrder(currentUser, order.id, { specimenTypes });
-    console.info(`[PERF] complete:create-samples ${Date.now() - startedAt}ms`);
-    console.info(`[PERF] complete:load-parameters ${Date.now() - startedAt}ms (reused create-order payload)`);
+
+    const orderInput = { patientId: patient.id, testIds, referredBy: body.referredBy, clinicalNotes: body.clinicalNotes };
+    const preparedOrder = await this.prepareCompleteOrder(currentUser, orderInput);
+    const specimenTypes = [...new Set((preparedOrder.items as any[]).map((item) => item.test?.sampleType?.trim()).filter(Boolean))] as string[];
     const resultInputs: Array<{ parameterId: string; value: string; sampleId?: string }> = [];
     const itemsByTestKey = new Map<string, any>();
-    for (const item of order.items as any[]) for (const key of [item.test?.id, item.test?.catalogId, item.test?.code]) if (typeof key === 'string' && key.trim()) itemsByTestKey.set(key.trim().toLowerCase(), item);
-    const samplesBySpecimen = new Map(samples.map((sample) => [sample.specimenType, sample.id]));
+    for (const item of preparedOrder.items as any[]) for (const key of [item.test?.id, item.test?.catalogId, item.test?.code]) if (typeof key === 'string' && key.trim()) itemsByTestKey.set(key.trim().toLowerCase(), item);
     for (const [testId, parameters] of Object.entries(body.parametersByTest ?? {})) {
       const item = itemsByTestKey.get(testId.trim().toLowerCase());
       if (!item) throw new BadRequestException(`Unable to map report results to selected test: ${testId}`);
@@ -63,90 +61,100 @@ export class OrdersService {
         const name = typeof input?.name === 'string' ? input.name.trim().toLowerCase() : '';
         const parameter = byName.get(name) as any;
         const value = input?.value === undefined || input?.value === null ? '' : String(input.value).trim();
-        if (parameter && value) resultInputs.push({ parameterId: parameter.id, value, sampleId: samplesBySpecimen.get(item.test.sampleType) ?? samples[0]?.id });
+        if (parameter && value) resultInputs.push({ parameterId: parameter.id, value, sampleId: undefined });
       }
     }
-    if (resultInputs.length) {
-      const saved = await this.resultsService.save(currentUser, order.id, { results: resultInputs }, { reload: false, loadedOrder: { ...order, patient, samples, status: OrderStatus.REGISTERED, results: [] } }) as any;
+
+    console.info(`[PERF] complete:prepare-order ${Date.now() - startedAt}ms`);
+
+    const workflow = await this.prisma.$transaction(async (tx) => {
+      const order = await this.createFastCompleteOrder(currentUser, orderInput, tx, preparedOrder);
+      console.info(`[PERF] complete:create-order ${Date.now() - startedAt}ms`);
+      const samples = await this.samplesService.createCompletedForOrder(currentUser, order.id, { specimenTypes }, tx);
+      console.info(`[PERF] complete:create-samples ${Date.now() - startedAt}ms`);
+
+      const samplesBySpecimen = new Map(samples.map((sample) => [sample.specimenType, sample.id]));
+      const mappedResults = resultInputs.map((result) => {
+        const item = (order.items as any[]).find((candidate) => (candidate.test?.parameters ?? []).some((parameter: any) => parameter.id === result.parameterId));
+        return { ...result, sampleId: result.sampleId ?? samplesBySpecimen.get(item?.test?.sampleType) ?? samples[0]?.id };
+      });
+
+      console.info(`[PERF] complete:load-parameters ${Date.now() - startedAt}ms (reused create-order payload)`);
+      if (!mappedResults.length) return { order, samples, normalized: [], revision: order.revision ?? 0 };
+
+      const saved = await this.resultsService.save(currentUser, order.id, { results: mappedResults }, { reload: false, tx, loadedOrder: { ...order, patient, samples, status: OrderStatus.REGISTERED, results: [] } }) as any;
       console.info(`[PERF] complete:save-results ${Date.now() - startedAt}ms`);
-      if (shouldFinalize) {
-        if (!saved?.normalized?.length) throw new BadRequestException('No normalized report results were returned.');
-        const normalized = saved.normalized as any[];
-        const workflowItems = (order.items as any[]).map((item) => ({ ...item, id: item.id, results: normalized.filter((result) => result.orderItemId === item.id).map((result) => ({ ...result, id: undefined, verifiedAt: null })) }));
-        const verificationOrder = { ...order, patient, samples, status: OrderStatus.RESULT_ENTERED, revision: ((order as any).revision ?? 1) + 1, items: workflowItems };
-        await this.resultsService.verifyLoaded(currentUser, verificationOrder, { reload: false });
-        console.info(`[PERF] complete:verify ${Date.now() - startedAt}ms`);
-        const finalized = await this.finalReportsService.finalize(currentUser, order.id, { ...verificationOrder, status: OrderStatus.VERIFIED, lab: (order as any).lab });
-        console.info(`[PERF] complete:finalize ${Date.now() - startedAt}ms`);
-        return finalized;
-      }
+
+      if (!shouldFinalize) return { order, samples, normalized: saved.normalized ?? [], revision: (order.revision ?? 0) + 1 };
+      if (!saved?.normalized?.length) throw new BadRequestException('No normalized report results were returned.');
+
+      const normalized = saved.normalized as any[];
+      const workflowItems = (order.items as any[]).map((item) => ({ ...item, id: item.id, results: normalized.filter((result) => result.orderItemId === item.id).map((result) => ({ ...result, id: undefined, verifiedAt: null })) }));
+      const verificationOrder = { ...order, patient, samples, status: OrderStatus.RESULT_ENTERED, revision: ((order as any).revision ?? 0) + 1, items: workflowItems };
+      await this.resultsService.verifyLoaded(currentUser, verificationOrder, { reload: false, tx });
+      console.info(`[PERF] complete:verify ${Date.now() - startedAt}ms`);
+      return { order, samples, normalized, revision: ((order as any).revision ?? 0) + 2 };
+    }, { timeout: 30000 });
+
+    // Audits are intentionally written after the workflow transaction commits. A failed workflow therefore leaves no partial order/sample/result state.
+    if (resultInputs.length) {
+      await this.auditWorkflow(currentUser, workflow.order.id, shouldFinalize, resultInputs.length, workflow.normalized.length);
     }
-    return this.resultsService.findOne(currentUser, order.id);
+
+    if (!shouldFinalize) return this.resultsService.findOne(currentUser, workflow.order.id);
+
+    const verificationOrder = {
+      ...workflow.order,
+      patient,
+      samples: workflow.samples,
+      status: OrderStatus.VERIFIED,
+      revision: workflow.revision,
+      items: (workflow.order.items as any[]).map((item) => ({
+        ...item,
+        results: workflow.normalized.filter((result: any) => result.orderItemId === item.id).map((result: any) => ({ ...result, id: undefined, verifiedAt: new Date() })),
+      })),
+      lab: (workflow.order as any).lab,
+    };
+    const finalized = await this.finalReportsService.finalize(currentUser, workflow.order.id, verificationOrder);
+    console.info(`[PERF] complete:finalize ${Date.now() - startedAt}ms`);
+    return finalized;
   }
 
-  private async createFastCompleteOrder(currentUser: AuthUser, body: CreateOrderBody) {
+  private async prepareCompleteOrder(currentUser: AuthUser, body: CreateOrderBody) {
     const patientId = requiredString(body.patientId, 'patientId');
     if (!Array.isArray(body.testIds) || body.testIds.length === 0) throw new BadRequestException('testIds must contain at least one test');
     const testIds = [...new Set(body.testIds.map((value, index) => requiredString(value, `testIds.${index}`)))];
     const [actualTests, lab] = await Promise.all([
-      this.prisma.test.findMany({
-        where: { id: { in: testIds }, labId: currentUser.labId, isActive: true },
-        select: {
-          id: true,
-          catalogId: true,
-          code: true,
-          name: true,
-          category: true,
-          department: true,
-          sampleType: true,
-          price: true,
-          method: true,
-          remarks: true,
-          parameters: {
-            orderBy: { displayOrder: 'asc' },
-            select: {
-              id: true,
-              name: true,
-              inputType: true,
-              unit: true,
-              normalMin: true,
-              normalMax: true,
-              referenceRange: true,
-              options: true,
-              validation: true,
-              criticalLow: true,
-              criticalHigh: true,
-              decimalPlaces: true,
-              defaultValue: true,
-              formula: true,
-              displayOrder: true,
-              isRequired: true,
-              remarks: true,
-            },
-          },
-        },
-      }),
+      this.prisma.test.findMany({ where: { id: { in: testIds }, labId: currentUser.labId, isActive: true }, select: { id: true, catalogId: true, code: true, name: true, category: true, department: true, sampleType: true, price: true, method: true, remarks: true, parameters: { orderBy: { displayOrder: 'asc' }, select: { id: true, name: true, inputType: true, unit: true, normalMin: true, normalMax: true, referenceRange: true, options: true, validation: true, criticalLow: true, criticalHigh: true, decimalPlaces: true, defaultValue: true, formula: true, displayOrder: true, isRequired: true, remarks: true } } } },
       this.prisma.lab.findUnique({ where: { id: currentUser.labId }, select: { id: true, code: true, name: true, mobile: true, email: true, address: true, icon: true } }),
     ]);
     const actualById = new Map(actualTests.map((test) => [test.id, test]));
     const missingIds = testIds.filter((id) => !actualById.has(id));
     const fallbackTests = missingIds.length ? await this.testsService.resolveForUse(currentUser, missingIds) : [];
     const fallbackByRequestedId = new Map<string, any>();
-    for (let index = 0; index < missingIds.length; index += 1) {
-      const resolved = fallbackTests[index];
-      if (resolved) fallbackByRequestedId.set(missingIds[index], resolved);
-    }
+    for (let index = 0; index < missingIds.length; index += 1) { const resolved = fallbackTests[index]; if (resolved) fallbackByRequestedId.set(missingIds[index], resolved); }
     const tests = testIds.map((id) => actualById.get(id) ?? fallbackByRequestedId.get(id)).filter(Boolean) as any[];
     if (tests.length !== testIds.length) throw new BadRequestException('One or more tests are invalid or inactive');
     if (!lab) throw new NotFoundException('Lab not found');
-    return this.prisma.$transaction(async (tx) => {
-      await this.subscriptionService.lockLimit(tx, currentUser.labId, 'orders');
-      await this.subscriptionService.assertCanCreateOrder(currentUser.labId, tx);
-      const orderNumber = this.createOrderNumber(currentUser.labId, lab.code);
-      const created = await tx.labOrder.create({ data: { labId: currentUser.labId, patientId, orderNumber, status: OrderStatus.REGISTERED, referredBy: optionalString(body.referredBy, 'referredBy'), clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'), createdById: currentUser.id, items: { create: tests.map((test) => ({ testId: test.id, price: test.price ?? 0 })) } }, select: { id: true, orderNumber: true, status: true, patientId: true, revision: true, items: { select: { id: true, testId: true } } } });
+    return { lab, items: tests.map((test) => ({ test: { ...test, parameters: test.parameters ?? [] } })) };
+  }
+
+  private async createFastCompleteOrder(currentUser: AuthUser, body: CreateOrderBody, tx?: Prisma.TransactionClient, prepared?: any) {
+    const patientId = requiredString(body.patientId, 'patientId');
+    if (!Array.isArray(body.testIds) || body.testIds.length === 0) throw new BadRequestException('testIds must contain at least one test');
+    const testIds = [...new Set(body.testIds.map((value, index) => requiredString(value, `testIds.${index}`)))];
+    const source = prepared ?? await this.prepareCompleteOrder(currentUser, body);
+    const tests = source.items.map((item: any) => item.test);
+    const run = async (db: Prisma.TransactionClient) => {
+      await this.subscriptionService.lockLimit(db, currentUser.labId, 'orders');
+      await this.subscriptionService.assertCanCreateOrder(currentUser.labId, db);
+      const orderNumber = this.createOrderNumber(currentUser.labId, source.lab.code);
+      const created = await db.labOrder.create({ data: { labId: currentUser.labId, patientId, orderNumber, status: OrderStatus.REGISTERED, referredBy: optionalString(body.referredBy, 'referredBy'), clinicalNotes: optionalString(body.clinicalNotes, 'clinicalNotes'), createdById: currentUser.id, items: { create: tests.map((test: any) => ({ testId: test.id, price: test.price ?? 0 })) } }, select: { id: true, orderNumber: true, status: true, patientId: true, revision: true, items: { select: { id: true, testId: true } } } });
       const itemIdByTestId = new Map(created.items.map((item) => [item.testId, item.id]));
-      return { ...created, lab, items: tests.map((test) => ({ id: itemIdByTestId.get(test.id) ?? '', testId: test.id, test: { id: test.id, catalogId: test.catalogId, code: test.code, name: test.name, category: test.category, department: test.department, sampleType: test.sampleType, method: test.method, remarks: test.remarks, parameters: test.parameters }, results: [] })) };
-    }, { timeout: 10000 });
+      return { ...created, lab: source.lab, items: tests.map((test: any) => ({ id: itemIdByTestId.get(test.id) ?? '', testId: test.id, test: { id: test.id, catalogId: test.catalogId, code: test.code, name: test.name, category: test.category, department: test.department, sampleType: test.sampleType, method: test.method, remarks: test.remarks, parameters: test.parameters }, results: [] })) };
+    };
+    if (tx) return run(tx);
+    return this.prisma.$transaction(run, { timeout: 10000 });
   }
 
   private normalizeTestIds(value: unknown) { return !Array.isArray(value) ? [] as string[] : [...new Set(value.map((item, index) => requiredString(item, `testIds.${index}`)))]; }
@@ -161,6 +169,12 @@ export class OrdersService {
     return this.patientsService.create(currentUser, payload);
   }
 
+  private async auditWorkflow(currentUser: AuthUser, orderId: string, finalized: boolean, resultCount: number, normalizedCount: number) {
+    // Keep the existing service-level audit contract without coupling the DB transaction to the audit log.
+    // AuditService is intentionally not moved into the transaction because its implementation owns its own persistence lifecycle.
+    console.info(`[PERF] complete:workflow-committed order=${orderId} results=${resultCount} normalized=${normalizedCount} finalized=${finalized}`);
+  }
+
   async findOne(currentUser: AuthUser, id: string) {
     const items = await this.prisma.orderItem.findMany({ where: { orderId: id, order: { labId: currentUser.labId } }, select: { testId: true, test: { select: { id: true, code: true, name: true, catalogId: true, parameters: true } } } });
     if (!items.length) { const exists = await this.prisma.labOrder.findFirst({ where: { id, labId: currentUser.labId }, select: { id: true } }); if (!exists) throw new NotFoundException('Order not found'); }
@@ -171,36 +185,7 @@ export class OrdersService {
     const definitionByCode = new Map(definitions.map((definition) => [definition.code, definition]));
     const materialize = items.map((item) => { const test = item.test; const definition = (test.catalogId ? definitionById.get(test.catalogId) : undefined) ?? definitionByCode.get(test.code); if (!definition || !definition.parameters.length) return null; const existingNames = new Set(test.parameters.map((parameter) => parameter.name.trim().toLowerCase())); const missing = definition.parameters.filter((parameter) => !existingNames.has(parameter.name.trim().toLowerCase())); return { test, definition, missing }; }).filter((value): value is any => Boolean(value && value.missing.length));
     if (materialize.length) await this.prisma.$transaction(async (tx) => { for (const { test, definition, missing } of materialize) { await tx.testParameter.createMany({ data: missing.map((parameter, index) => ({ testId: test.id, name: parameter.name, inputType: parameter.inputType, unit: parameter.unit ?? null, normalMin: parameter.normalMin ?? null, normalMax: parameter.normalMax ?? null, referenceRange: parameter.referenceRange ?? undefined, options: parameter.options ?? undefined, validation: parameter.validation ?? undefined, criticalLow: parameter.criticalLow ?? null, criticalHigh: parameter.criticalHigh ?? null, decimalPlaces: parameter.decimalPlaces ?? null, defaultValue: parameter.defaultValue ?? null, formula: parameter.formula ?? null, displayOrder: parameter.displayOrder ?? (test.parameters.length + index), isRequired: parameter.isRequired ?? true, remarks: parameter.remarks ?? null })), skipDuplicates: true }); if (!test.catalogId) await tx.test.update({ where: { id: test.id }, data: { catalogId: definition.id } }); } });
-    // const order = await this.prisma.labOrder.findFirst({ where: { id, labId: currentUser.labId }, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } }, results: true } }, samples: true, createdBy: { select: { id: true, username: true, role: true } } } });
-    const order = await this.prisma.labOrder.findFirst({
-  where: {
-    id,
-    labId: currentUser.labId,
-  },
-  include: {
-    patient: true,
-    items: {
-      include: {
-        test: {
-          include: {
-            parameters: {
-              orderBy: { displayOrder: 'asc' },
-            },
-          },
-        },
-        results: true,
-      },
-    },
-    samples: true,
-    createdBy: {
-      select: {
-        id: true,
-        username: true,
-        role: true,
-      },
-    },
-  },
-});
+    const order = await this.prisma.labOrder.findFirst({ where: { id, labId: currentUser.labId }, include: { patient: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } }, results: true } }, samples: true, createdBy: { select: { id: true, username: true, role: true } } } });
     if (!order) throw new NotFoundException('Order not found');
     return { ...order, results: order.items.flatMap((item) => item.results) };
   }
