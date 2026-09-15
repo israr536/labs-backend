@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Gender } from '@prisma/client';
-import { AuthUser } from '../auth/auth.types';
 import { enumValue, optionalDate, optionalInteger, optionalString, requiredString } from '../common/validation';
+import { AuthUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionService } from '../labs/subscription.service';
 
@@ -59,13 +59,15 @@ export class PatientsService {
       address: body.address === undefined ? undefined : optionalString(body.address, 'address'),
     };
 
-    const result = await this.prisma.patient.updateMany({
-      where: { id, labId: currentUser.labId },
-      data,
-    });
-    if (result.count !== 1) throw new NotFoundException('Patient not found');
-
-    return this.prisma.patient.findUnique({ where: { id } });
+    try {
+      return await this.prisma.patient.update({
+        where: { id },
+        data,
+      });
+    } catch (error: any) {
+      if (error?.code === 'P2025') throw new NotFoundException('Patient not found');
+      throw error;
+    }
   }
 
   async remove(currentUser: AuthUser, id: string) {
