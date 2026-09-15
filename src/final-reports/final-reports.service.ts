@@ -17,8 +17,8 @@ export class FinalReportsService {
     private readonly audit: AuditService,
   ) {}
 
-  async finalize(currentUser: AuthUser, orderId: string) {
-    const order = await this.getOrder(currentUser, orderId);
+  async finalize(currentUser: AuthUser, orderId: string, loadedOrder?: any) {
+    const order = loadedOrder ?? (await this.getOrder(currentUser, orderId));
     if (order.status === OrderStatus.FINAL) return this.getReport(currentUser, orderId);
     if (order.status !== OrderStatus.VERIFIED) {
       throw new BadRequestException('Only verified orders can be finalized');
@@ -115,8 +115,6 @@ export class FinalReportsService {
       { orderId, reportNumber, version: 1 },
     );
 
-    // We already have the immutable snapshot and created report row. Avoid an
-    // immediate second DB read of the same final report just to return it.
     return {
       ...snapshot,
       id: report.id,
@@ -527,7 +525,6 @@ export class FinalReportsService {
         patient: order.patient,
         samples: order.samples,
         tests: order.items.map((item: any) => {
-          // One Map lookup per parameter instead of scanning every result array.
           const resultByParameterId = new Map<string, any>(
             item.results.map((row: any) => [row.parameterId, row]),
           );
