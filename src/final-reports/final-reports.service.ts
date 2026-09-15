@@ -1,1 +1,1 @@
-// branch will be restored to previous known-good commit
+// restore via branch reset
