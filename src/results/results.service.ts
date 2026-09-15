@@ -103,7 +103,7 @@ export class ResultsService {
       }
 
       await tx.labOrder.update({ where: { id: order.id }, data: { status: OrderStatus.RESULT_ENTERED } });
-      await tx.auditLog.create({ data: { labId: currentUser.labId, actorId: currentUser.id, action: AuditAction.UPDATE, entity: 'LabOrderResults', entityId: order.id, metadata: { operation: 'SAVE_RESULTS', orderRevision: order.revision + 1, createdCount: createdParameterIds.length, updatedCount: changedParameterIds.length, createdParameterIds, updatedParameterIds: changedParameterIds } } });
+      await tx.auditLog.create({ data: { labId: currentUser.labId, actorId: currentUser.id, action: AuditAction.UPDATE, entity: 'LabOrderResults', entityId: order.id, metadata: { operation: 'SAVE_RESULTS', orderRevision: order.revision + 1, createdCount: createdParameterIds.length, updatedCount: changedParameterIds.length, createdParameterIds, updatedParameterIds: changedParameterIds } });
     });
 
     if (options.reload === false) return undefined;
@@ -117,6 +117,11 @@ export class ResultsService {
 
   async verify(currentUser: AuthUser, orderId: string, options: { reload?: boolean } = {}) {
     const order = await this.getOrder(currentUser, orderId);
+    return this.verifyLoaded(currentUser, order, options);
+  }
+
+  async verifyLoaded(currentUser: AuthUser, order: any, options: { reload?: boolean } = {}) {
+    const lockedStatuses: OrderStatus[] = [OrderStatus.CANCELLED, OrderStatus.FINAL, OrderStatus.VERIFIED];
     if (order.status !== OrderStatus.RESULT_ENTERED) throw new BadRequestException('Only orders with entered results can be verified');
     const missing: string[] = [];
     const resultIds: string[] = [];
@@ -140,10 +145,10 @@ export class ResultsService {
       if (locked.count !== 1) throw new ConflictException('This order changed while you were verifying it. Reload the order and try again.');
       const verified = await tx.orderResult.updateMany({ where: { id: { in: resultIds }, verifiedAt: null }, data: { verifiedAt, verifiedById: currentUser.id } });
       if (verified.count !== resultIds.length) throw new ConflictException('One or more results changed while verification is in progress. Reload the order and try again.');
-      await tx.auditLog.create({ data: { labId: currentUser.labId, actorId: currentUser.id, action: AuditAction.VERIFY, entity: 'LabOrderResults', entityId: order.id, metadata: { operation: 'VERIFY_RESULTS', resultCount: resultIds.length, resultIds } } });
+      await tx.auditLog.create({ data: { labId: currentUser.labId, actorId: currentUser.id, action: AuditAction.VERIFY, entity: 'LabOrderResults', entityId: order.id, metadata: { operation: 'VERIFY_RESULTS', resultCount: resultIds.length, resultIds } });
     });
     if (options.reload === false) return undefined;
-    return this.findOne(currentUser, orderId);
+    return this.findOne(currentUser, order.id);
   }
 
   private async resolveReferenceRanges(parameterIds: string[], patient: { dateOfBirth: Date | null; age: number | null; gender: any }, methodByParameter: Map<string, string | null>, analyzerByParameter: Map<string, string | null>, at = new Date()) {
