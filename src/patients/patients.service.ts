@@ -59,15 +59,12 @@ export class PatientsService {
       address: body.address === undefined ? undefined : optionalString(body.address, 'address'),
     };
 
-    try {
-      return await this.prisma.patient.update({
-        where: { id },
-        data,
-      });
-    } catch (error: any) {
-      if (error?.code === 'P2025') throw new NotFoundException('Patient not found');
-      throw error;
-    }
+    const rows = await this.prisma.patient.updateManyAndReturn({
+      where: { id, labId: currentUser.labId },
+      data,
+    });
+    if (rows.length !== 1) throw new NotFoundException('Patient not found');
+    return rows[0];
   }
 
   async remove(currentUser: AuthUser, id: string) {
