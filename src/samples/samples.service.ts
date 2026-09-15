@@ -35,8 +35,7 @@ export class SamplesService {
       const existingTypes = new Set(existing.map((sample) => sample.specimenType));
       const typesToCreate = types.filter((type) => !existingTypes.has(type));
       if (typesToCreate.length === 0) throw new BadRequestException('Samples already exist for the requested specimen types');
-      const samples = await this.createSamplesBatch(tx, currentUser.labId, order.id, typesToCreate, explicitContainer);
-      return samples;
+      return this.createSamplesBatch(tx, currentUser.labId, order.id, typesToCreate, explicitContainer, undefined, SampleStatus.PENDING);
     });
   }
 
@@ -63,7 +62,7 @@ export class SamplesService {
       const typesToCreate = types.filter((type) => !existingTypes.has(type));
       if (typesToCreate.length === 0) throw new BadRequestException('Samples already exist for the requested specimen types');
       const now = new Date();
-      const samples = await this.createSamplesBatch(tx, currentUser.labId, orderId, typesToCreate, explicitContainer, now);
+      const samples = await this.createSamplesBatch(tx, currentUser.labId, orderId, typesToCreate, explicitContainer, now, SampleStatus.COMPLETED);
       await tx.labOrder.update({ where: { id: orderId }, data: { status: OrderStatus.SAMPLE_COLLECTED } });
       return samples;
     });
@@ -111,6 +110,7 @@ export class SamplesService {
     specimenTypes: string[],
     container?: string | null,
     now = new Date(),
+    status: SampleStatus = SampleStatus.PENDING,
   ) {
     const data = specimenTypes.map((specimenType) => ({
       labId,
@@ -118,9 +118,9 @@ export class SamplesService {
       accessionNumber: this.createAccessionNumber(),
       specimenType,
       container,
-      status: SampleStatus.COMPLETED,
-      collectedAt: now,
-      receivedAt: now,
+      status,
+      collectedAt: status === SampleStatus.COMPLETED ? now : undefined,
+      receivedAt: status === SampleStatus.COMPLETED ? now : undefined,
     }));
 
     await tx.sample.createMany({ data });
