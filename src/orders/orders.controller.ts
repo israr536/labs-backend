@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { OrderStatus, UserRole } from '@prisma/client';
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -46,6 +46,12 @@ export class OrdersController {
     }
     return this.ordersService.findAll(user, parsedSkip, parsedLimit, search?.trim() || undefined, normalizedStatus as OrderStatus | undefined, patientId?.trim() || undefined, testId?.trim() || undefined);
   }
+
+  @Patch(':id/report')
+  updateReport(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: unknown) {
+    return this.ordersService.updateReport(user, id, (body ?? {}) as Record<string, unknown>);
+  }
+
 
   @Get(':id')
   findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) {

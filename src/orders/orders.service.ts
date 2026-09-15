@@ -176,6 +176,50 @@ export class OrdersService {
     console.info(`[PERF] complete:workflow-committed order=${orderId} results=${resultCount} normalized=${normalizedCount} finalized=${finalized}`);
   }
 
+  async updateReport(currentUser: AuthUser, orderId: string, body: Record<string, unknown>) {
+    const order = await this.resultsService.getOrderForWorkflow(currentUser, orderId) as any;
+    if (order.status === OrderStatus.FINAL || order.status === OrderStatus.VERIFIED) throw new BadRequestException('Finalized or verified reports cannot be edited');
+    const expectedRevision = body.revision === undefined ? order.revision : Number(body.revision);
+    if (!Number.isInteger(expectedRevision) || expectedRevision !== order.revision) throw new BadRequestException('The report revision is stale. Reload the report and try again.');
+    const patient = body.patient && typeof body.patient === 'object' ? body.patient as Record<string, unknown> : undefined;
+    const results = Array.isArray(body.results) ? body.results : [];
+    const requestedStatus = typeof body.status === 'string' ? body.status.trim() : '';
+    const shouldFinalize = requestedStatus === 'Completed' || requestedStatus === 'Critical' || requestedStatus === OrderStatus.FINAL;
+    if (shouldFinalize && currentUser.role !== 'ADMIN' && currentUser.role !== 'TECHNICIAN') throw new BadRequestException('Only an administrator or technician can complete and finalize a report');
+
+    const transactionResult = await this.prisma.$transaction(async (tx) => {
+      let updatedPatient = order.patient;
+      if (patient) {
+        const updateData = {
+          name: typeof patient.name === 'string' ? patient.name.trim() : undefined,
+          age: patient.age === undefined ? undefined : Number(patient.age),
+          gender: typeof patient.gender === 'string' ? patient.gender : undefined,
+          mobile: typeof patient.mobile === 'string' ? patient.mobile.trim() : undefined,
+          email: typeof patient.email === 'string' ? patient.email.trim() || null : undefined,
+          address: typeof patient.address === 'string' ? patient.address.trim() || null : undefined,
+        };
+        const rows = await tx.patient.updateManyAndReturn({ where: { id: order.patientId, labId: currentUser.labId }, data: updateData as any });
+        if (rows.length !== 1) throw new NotFoundException('Patient not found');
+        updatedPatient = rows[0];
+      }
+      await tx.labOrder.updateMany({ where: { id: orderId, labId: currentUser.labId, revision: expectedRevision, status: { notIn: [OrderStatus.FINAL, OrderStatus.VERIFIED] } }, data: { referredBy: typeof body.referredBy === 'string' ? body.referredBy.trim() : undefined, clinicalNotes: typeof body.clinicalNotes === 'string' ? body.clinicalNotes.trim() : undefined } });
+      if (results.length) {
+        const saved = await this.resultsService.save(currentUser, orderId, { results }, { reload: false, tx, loadedOrder: order, skipAudit: true }) as any;
+        return { patient: updatedPatient, normalized: saved.normalized ?? [] };
+      }
+      return { patient: updatedPatient, normalized: [] };
+    }, { timeout: 30000 });
+
+    if (shouldFinalize) {
+      const refreshed = await this.resultsService.getOrderForWorkflow(currentUser, orderId) as any;
+      if (refreshed.status !== OrderStatus.RESULT_ENTERED) throw new BadRequestException('Results are required before finalization');
+      await this.resultsService.verify(currentUser, orderId);
+      return this.finalReportsService.finalize(currentUser, orderId);
+    }
+    return this.resultsService.findOne(currentUser, orderId);
+  }
+
+
   async findOne(currentUser: AuthUser, id: string) {
     const order = await this.prisma.labOrder.findFirst({
       where: { id, labId: currentUser.labId },
