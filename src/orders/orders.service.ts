@@ -44,6 +44,9 @@ export class OrdersService {
     if (shouldFinalize && currentUser.role !== 'ADMIN' && currentUser.role !== 'TECHNICIAN') throw new BadRequestException('Only an administrator or technician can complete and finalize a report');
 
     const patient = await this.resolvePatient(currentUser, body);
+    if (!patient) {
+  throw new NotFoundException('Patient not found');
+}
     const testIds = this.normalizeTestIds(body.testIds);
     if (!testIds.length) throw new BadRequestException('Please select at least one configured laboratory test.');
 
@@ -124,10 +127,61 @@ export class OrdersService {
     const patientId = requiredString(body.patientId, 'patientId');
     if (!Array.isArray(body.testIds) || body.testIds.length === 0) throw new BadRequestException('testIds must contain at least one test');
     const testIds = [...new Set(body.testIds.map((value, index) => requiredString(value, `testIds.${index}`)))];
-    const [actualTests, lab] = await Promise.all([
-      this.prisma.test.findMany({ where: { id: { in: testIds }, labId: currentUser.labId, isActive: true }, select: { id: true, catalogId: true, code: true, name: true, category: true, department: true, sampleType: true, price: true, method: true, remarks: true, parameters: { orderBy: { displayOrder: 'asc' }, select: { id: true, name: true, inputType: true, unit: true, normalMin: true, normalMax: true, referenceRange: true, options: true, validation: true, criticalLow: true, criticalHigh: true, decimalPlaces: true, defaultValue: true, formula: true, displayOrder: true, isRequired: true, remarks: true } } } },
-      this.prisma.lab.findUnique({ where: { id: currentUser.labId }, select: { id: true, code: true, name: true, mobile: true, email: true, address: true, icon: true } }),
-    ]);
+   const [actualTests, lab] = await Promise.all([
+  this.prisma.test.findMany({
+    where: {
+      id: { in: testIds },
+      labId: currentUser.labId,
+      isActive: true,
+    },
+    select: {
+      id: true,
+      catalogId: true,
+      code: true,
+      name: true,
+      category: true,
+      department: true,
+      sampleType: true,
+      price: true,
+      method: true,
+      remarks: true,
+      parameters: {
+        orderBy: { displayOrder: 'asc' },
+        select: {
+          id: true,
+          name: true,
+          inputType: true,
+          unit: true,
+          normalMin: true,
+          normalMax: true,
+          referenceRange: true,
+          options: true,
+          validation: true,
+          criticalLow: true,
+          criticalHigh: true,
+          decimalPlaces: true,
+          defaultValue: true,
+          formula: true,
+          displayOrder: true,
+          isRequired: true,
+          remarks: true,
+        },
+      },
+    },
+  }),
+  this.prisma.lab.findUnique({
+    where: { id: currentUser.labId },
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      mobile: true,
+      email: true,
+      address: true,
+      icon: true,
+    },
+  }),
+]);
     const actualById = new Map(actualTests.map((test) => [test.id, test]));
     const missingIds = testIds.filter((id) => !actualById.has(id));
     const fallbackTests = missingIds.length ? await this.testsService.resolveForUse(currentUser, missingIds) : [];
