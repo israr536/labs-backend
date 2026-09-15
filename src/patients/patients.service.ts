@@ -35,13 +35,15 @@ export class PatientsService {
   }
 
   findAll(currentUser: AuthUser, search?: string, limitValue?: string) {
-    const parsedLimit = limitValue === undefined ? 100 : Number(limitValue);
+    const normalizedSearch = search?.trim() ?? '';
+    if (normalizedSearch.length === 1) return [];
+    const parsedLimit = limitValue === undefined ? 50 : Number(limitValue);
     const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 100;
     return this.prisma.patient.findMany({
-      where: { labId: currentUser.labId, ...(search ? { OR: [
-      { name: { contains: search, mode: 'insensitive' as const } },
-      { mobile: { contains: search, mode: 'insensitive' as const } },
-      { email: { contains: search, mode: 'insensitive' as const } },
+      where: { labId: currentUser.labId, ...(normalizedSearch ? { OR: [
+      { name: { contains: normalizedSearch, mode: 'insensitive' as const } },
+      { mobile: { contains: normalizedSearch, mode: 'insensitive' as const } },
+      { email: { contains: normalizedSearch, mode: 'insensitive' as const } },
     ] } : {}) },
       orderBy: { createdAt: 'desc' },
       take: limit,

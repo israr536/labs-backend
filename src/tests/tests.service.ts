@@ -198,7 +198,18 @@ export class TestsService {
   }
 
   async reportEntryCatalog(currentUser: AuthUser) {
-    return this.findAll(currentUser);
+    const [userRows, labRows, definitions] = await Promise.all([
+      this.prisma.test.findMany({ where: { labId: currentUser.labId, scopeId: currentUser.id, isActive: true }, select: this.reportEntrySelect(), orderBy: [{ category: 'asc' }, { name: 'asc' }] }),
+      this.prisma.test.findMany({ where: { labId: currentUser.labId, scopeId: currentUser.labId, isActive: true }, select: this.reportEntrySelect(), orderBy: [{ category: 'asc' }, { name: 'asc' }] }),
+      this.prisma.testDefinition.findMany({ where: { isActive: true }, select: { id: true, code: true, shortName: true, name: true, category: true, department: true, specimenType: true, method: true, parameters: { orderBy: { displayOrder: 'asc' }, select: { id: true, name: true, inputType: true, unit: true, normalMin: true, normalMax: true, referenceRange: true, options: true, validation: true, criticalLow: true, criticalHigh: true, decimalPlaces: true, defaultValue: true, formula: true, displayOrder: true, isRequired: true, remarks: true } } }, orderBy: [{ category: 'asc' }, { name: 'asc' }] }),
+    ]);
+    const byKey = new Map<string, any>();
+    for (const row of [...labRows, ...userRows]) { byKey.set(`${row.catalogId ?? ''}:${row.code.toLowerCase()}`, row); }
+    return definitions.map((definition) => byKey.get(`${definition.id}:${definition.code.toLowerCase()}`) ?? this.virtualTest(currentUser.labId, definition));
+  }
+
+  private reportEntrySelect() {
+    return { id: true, catalogId: true, code: true, shortName: true, name: true, category: true, department: true, sampleType: true, method: true, price: true, tat: true, isActive: true, parameters: { orderBy: { displayOrder: 'asc' }, select: { id: true, name: true, inputType: true, unit: true, normalMin: true, normalMax: true, referenceRange: true, options: true, validation: true, criticalLow: true, criticalHigh: true, decimalPlaces: true, defaultValue: true, formula: true, displayOrder: true, isRequired: true, remarks: true } } } as const;
   }
 
   async findOne(currentUser: AuthUser, id: string) {
