@@ -114,9 +114,15 @@ export class OptimizedOrdersService extends OrdersService {
 
       if (!saved?.normalized?.length) throw new BadRequestException('No normalized report results were returned.');
       const normalized = saved.normalized as any[];
+      const normalizedByItem = new Map<string, any[]>();
+      for (const result of normalized) {
+        const rows = normalizedByItem.get(result.orderItemId) ?? [];
+        rows.push(result);
+        normalizedByItem.set(result.orderItemId, rows);
+      }
       const workflowItems = (order.items as any[]).map((item) => ({
         ...item,
-        results: normalized.filter((result) => result.orderItemId === item.id)
+        results: (normalizedByItem.get(item.id) ?? [])
           .map((result) => ({ ...result, id: undefined, verifiedAt: null })),
       }));
       const verificationOrder = {
@@ -153,7 +159,7 @@ export class OptimizedOrdersService extends OrdersService {
         revision: (order.revision ?? 0) + 2,
         items: (order.items as any[]).map((item) => ({
           ...item,
-          results: normalized.filter((result) => result.orderItemId === item.id)
+          results: (normalizedByItem.get(item.id) ?? [])
             .map((result) => ({ ...result, id: undefined, verifiedAt: finalizedAt })),
         })),
         lab,
@@ -194,10 +200,6 @@ export class OptimizedOrdersService extends OrdersService {
       });
       if (finalized.count !== 1) throw new BadRequestException('Order could not be finalized because its status changed.');
 
-      await this.audit.record(currentUser, AuditAction.FINALIZE, 'FinalReport', created.id, {
-        orderId: order.id, reportNumber, version: 1,
-      }, tx);
-
       return {
         order,
         samples,
@@ -215,6 +217,11 @@ export class OptimizedOrdersService extends OrdersService {
     }, { timeout: 30000 });
 
     if (!shouldFinalize) return this.optimizedResults.findOne(currentUser, workflow.order.id);
+    await this.audit.record(currentUser, AuditAction.FINALIZE, 'FinalReport', workflow.finalReport.id, {
+      orderId: workflow.order.id,
+      reportNumber: workflow.finalReport.reportNumber,
+      version: workflow.finalReport.version,
+    });
     return workflow.finalReport;
   }
 
