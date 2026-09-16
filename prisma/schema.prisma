@@ -118,8 +118,7 @@ model User {
   createdOrders  LabOrder[]     @relation("OrderCreatedBy")
   verifiedResults OrderResult[] @relation("OrderResultVerifiedBy")
   finalizedReports FinalReport[] @relation("FinalReportFinalizedBy")
-  auditLogs AuditLog[] @relation("AuditActor")
-  finalReportVersions FinalReportVersion[] @relation("VersionCreatedBy")
+  auditLogs User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([labId])
 }
@@ -384,7 +383,7 @@ model OrderResult {
   parameterId  String
   sampleId     String?
   value        String
-  flag         ResultFlag?
+  flag          ResultFlag?
   referenceRangeId String?
   referenceRangeSnapshot Json?
   verifiedAt   DateTime?
@@ -481,6 +480,7 @@ model AuditLog {
 
   @@index([labId, createdAt])
   @@index([labId, entity, entityId])
+  @@index([labId, entity, entityId, action, createdAt])
   @@index([actorId])
 }
 
@@ -506,7 +506,7 @@ model PendingLabRegistration {
   code              String
   name              String
   mobile             String
-  email              String?
+  email             String?
   address           String?
   adminUsername     String
   adminMobile       String
