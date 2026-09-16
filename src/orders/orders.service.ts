@@ -67,11 +67,13 @@ export class OrdersService {
 
     const workflow = await this.prisma.$transaction(async (tx) => {
       const order = await this.createFastCompleteOrder(currentUser, orderInput, tx, preparedOrder);
-      const samples = await this.samplesService.createCompletedForOrder(currentUser, order.id, { specimenTypes }, tx);
+      const samples = await this.samplesService.createCompletedForOrder(currentUser, order.id, { specimenTypes }, tx, { assumeFreshOrder: true });
 
       const samplesBySpecimen = new Map(samples.map((sample) => [sample.specimenType, sample.id]));
+      const itemByParameterId = new Map<string, any>();
+      for (const item of order.items as any[]) for (const parameter of item.test.parameters ?? []) itemByParameterId.set(parameter.id, item);
       const mappedResults = resultInputs.map((result) => {
-        const item = (order.items as any[]).find((candidate) => (candidate.test?.parameters ?? []).some((parameter: any) => parameter.id === result.parameterId));
+        const item = itemByParameterId.get(result.parameterId);
         return { ...result, sampleId: result.sampleId ?? samplesBySpecimen.get(item?.test?.sampleType) ?? samples[0]?.id };
       });
 
@@ -219,14 +221,57 @@ export class OrdersService {
     return this.resultsService.findOne(currentUser, orderId);
   }
 
-
   async findOne(currentUser: AuthUser, id: string) {
     const order = await this.prisma.labOrder.findFirst({
       where: { id, labId: currentUser.labId },
-      include: {
-        patient: true,
-        items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } }, results: true } },
-        samples: true,
+      select: {
+        id: true,
+        labId: true,
+        patientId: true,
+        orderNumber: true,
+        status: true,
+        revision: true,
+        referredBy: true,
+        clinicalNotes: true,
+        orderedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        patient: {
+          select: { id: true, name: true, dateOfBirth: true, age: true, gender: true, mobile: true, email: true, address: true },
+        },
+        items: {
+          select: {
+            id: true,
+            orderId: true,
+            testId: true,
+            price: true,
+            createdAt: true,
+            test: {
+              select: {
+                id: true,
+                catalogId: true,
+                code: true,
+                shortName: true,
+                name: true,
+                category: true,
+                department: true,
+                sampleType: true,
+                method: true,
+                remarks: true,
+                parameters: {
+                  orderBy: { displayOrder: 'asc' },
+                  select: { id: true, testId: true, name: true, inputType: true, unit: true, normalMin: true, normalMax: true, referenceRange: true, options: true, validation: true, criticalLow: true, criticalHigh: true, decimalPlaces: true, defaultValue: true, formula: true, displayOrder: true, isRequired: true, remarks: true },
+                },
+              },
+            },
+            results: {
+              select: { id: true, orderItemId: true, parameterId: true, sampleId: true, value: true, flag: true, referenceRangeId: true, referenceRangeSnapshot: true, verifiedAt: true, verifiedById: true, createdAt: true, updatedAt: true },
+            },
+          },
+        },
+        samples: {
+          select: { id: true, labId: true, orderId: true, accessionNumber: true, specimenType: true, container: true, status: true, collectedAt: true, receivedAt: true, rejectedReason: true, createdAt: true, updatedAt: true },
+        },
         createdBy: { select: { id: true, username: true, role: true } },
       },
     });
