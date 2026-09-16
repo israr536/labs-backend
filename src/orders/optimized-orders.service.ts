@@ -1,8 +1,7 @@
 import { BadRequestException, NotFoundException, Injectable } from '@nestjs/common';
-import { AuditAction, OrderStatus, Prisma, SampleStatus } from '@prisma/client';
+import { AuditAction, OrderStatus, SampleStatus } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
-import { optionalString, requiredString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionService } from '../labs/subscription.service';
 import { TestsService } from '../tests/tests.service';
@@ -19,8 +18,8 @@ export class OptimizedOrdersService extends OrdersService {
     subscriptionService: SubscriptionService,
     testsService: TestsService,
     patientsService: PatientsService,
-    samplesService: SamplesService,
     resultsService: ResultsService,
+    samplesService: SamplesService,
     finalReportsService: FinalReportsService,
     private readonly optimizedPrisma: PrismaService,
     private readonly optimizedPatients: PatientsService,
@@ -29,15 +28,7 @@ export class OptimizedOrdersService extends OrdersService {
     private readonly optimizedFinalReports: FinalReportsService,
     private readonly audit: AuditService,
   ) {
-    super(
-      prisma,
-      subscriptionService,
-      testsService,
-      patientsService,
-      samplesService,
-      resultsService,
-      finalReportsService,
-    );
+    super(prisma, subscriptionService, testsService, patientsService, samplesService, resultsService, finalReportsService);
   }
 
   async createCompleteReport(currentUser: AuthUser, body: CompleteReportBody) {
@@ -47,24 +38,15 @@ export class OptimizedOrdersService extends OrdersService {
       throw new BadRequestException('Only an administrator or technician can complete and finalize a report');
     }
 
+    const patient = await this.resolvePatientOptimized(currentUser, body);
     const base = this as any;
-    const patient = await base.resolvePatient(currentUser, body);
-    if (!patient) throw new NotFoundException('Patient not found');
-
     const testIds = base.normalizeTestIds(body.testIds);
     if (!testIds.length) throw new BadRequestException('Please select at least one configured laboratory test.');
 
-    const orderInput = {
-      patientId: patient.id,
-      testIds,
-      referredBy: body.referredBy,
-      clinicalNotes: body.clinicalNotes,
-    };
+    const orderInput = { patientId: patient.id, testIds, referredBy: body.referredBy, clinicalNotes: body.clinicalNotes };
     const preparedOrder = await base.prepareCompleteOrder(currentUser, orderInput);
     const specimenTypes = [...new Set(
-      (preparedOrder.items as any[])
-        .map((item) => item.test?.sampleType?.trim())
-        .filter(Boolean),
+      (preparedOrder.items as any[]).map((item) => item.test?.sampleType?.trim()).filter(Boolean),
     )] as string[];
 
     const resultInputs: Array<{ parameterId: string; value: string; sampleId?: string }> = [];
@@ -74,13 +56,10 @@ export class OptimizedOrdersService extends OrdersService {
         if (typeof key === 'string' && key.trim()) itemsByTestKey.set(key.trim().toLowerCase(), item);
       }
     }
-
     for (const [testId, parameters] of Object.entries(body.parametersByTest ?? {})) {
       const item = itemsByTestKey.get(testId.trim().toLowerCase());
       if (!item) throw new BadRequestException(`Unable to map report results to selected test: ${testId}`);
-      const byName = new Map(
-        (item.test.parameters ?? []).map((parameter: any) => [parameter.name.trim().toLowerCase(), parameter]),
-      );
+      const byName = new Map((item.test.parameters ?? []).map((parameter: any) => [parameter.name.trim().toLowerCase(), parameter]));
       for (const input of parameters ?? []) {
         const name = typeof input?.name === 'string' ? input.name.trim().toLowerCase() : '';
         const parameter = byName.get(name) as any;
@@ -104,13 +83,9 @@ export class OptimizedOrdersService extends OrdersService {
       for (const item of order.items as any[]) {
         for (const parameter of item.test.parameters ?? []) itemByParameterId.set(parameter.id, item);
       }
-
       const mappedResults = resultInputs.map((result) => {
         const item = itemByParameterId.get(result.parameterId);
-        return {
-          ...result,
-          sampleId: result.sampleId ?? samplesBySpecimen.get(item?.test?.sampleType) ?? samples[0]?.id,
-        };
+        return { ...result, sampleId: result.sampleId ?? samplesBySpecimen.get(item?.test?.sampleType) ?? samples[0]?.id };
       });
 
       if (!mappedResults.length) {
@@ -131,14 +106,9 @@ export class OptimizedOrdersService extends OrdersService {
       ) as any;
 
       if (!shouldFinalize) {
-        await this.audit.record(
-          currentUser,
-          AuditAction.UPDATE,
-          'LabOrderResults',
-          order.id,
-          { operation: 'SAVE_RESULTS', resultCount: mappedResults.length },
-          tx,
-        );
+        await this.audit.record(currentUser, AuditAction.UPDATE, 'LabOrderResults', order.id, {
+          operation: 'SAVE_RESULTS', resultCount: mappedResults.length,
+        }, tx);
         return { order, samples, normalized: saved.normalized ?? [], revision: (order.revision ?? 0) + 1, finalReport: null };
       }
 
@@ -146,8 +116,7 @@ export class OptimizedOrdersService extends OrdersService {
       const normalized = saved.normalized as any[];
       const workflowItems = (order.items as any[]).map((item) => ({
         ...item,
-        results: normalized
-          .filter((result) => result.orderItemId === item.id)
+        results: normalized.filter((result) => result.orderItemId === item.id)
           .map((result) => ({ ...result, id: undefined, verifiedAt: null })),
       }));
       const verificationOrder = {
@@ -159,28 +128,14 @@ export class OptimizedOrdersService extends OrdersService {
         items: workflowItems,
       };
 
-      await this.optimizedResults.verifyLoaded(currentUser, verificationOrder, {
-        reload: false,
-        tx,
-        skipAudit: true,
-      });
+      await this.optimizedResults.verifyLoaded(currentUser, verificationOrder, { reload: false, tx, skipAudit: true });
 
-      await this.audit.record(
-        currentUser,
-        AuditAction.UPDATE,
-        'LabOrderResults',
-        order.id,
-        { operation: 'SAVE_RESULTS', resultCount: mappedResults.length },
-        tx,
-      );
-      await this.audit.record(
-        currentUser,
-        AuditAction.VERIFY,
-        'LabOrderResults',
-        order.id,
-        { operation: 'VERIFY_RESULTS', resultCount: normalized.length },
-        tx,
-      );
+      await this.audit.record(currentUser, AuditAction.UPDATE, 'LabOrderResults', order.id, {
+        operation: 'SAVE_RESULTS', resultCount: mappedResults.length,
+      }, tx);
+      await this.audit.record(currentUser, AuditAction.VERIFY, 'LabOrderResults', order.id, {
+        operation: 'VERIFY_RESULTS', resultCount: normalized.length,
+      }, tx);
 
       const finalizedAt = new Date();
       const lab = (order as any).lab ?? preparedOrder.lab;
@@ -198,8 +153,7 @@ export class OptimizedOrdersService extends OrdersService {
         revision: (order.revision ?? 0) + 2,
         items: (order.items as any[]).map((item) => ({
           ...item,
-          results: normalized
-            .filter((result) => result.orderItemId === item.id)
+          results: normalized.filter((result) => result.orderItemId === item.id)
             .map((result) => ({ ...result, id: undefined, verifiedAt: finalizedAt })),
         })),
         lab,
@@ -240,34 +194,60 @@ export class OptimizedOrdersService extends OrdersService {
       });
       if (finalized.count !== 1) throw new BadRequestException('Order could not be finalized because its status changed.');
 
-      await this.audit.record(
-        currentUser,
-        AuditAction.FINALIZE,
-        'FinalReport',
-        created.id,
-        { orderId: order.id, reportNumber, version: 1 },
-        tx,
-      );
-
-      const finalReport = {
-        ...snapshot,
-        id: created.id,
-        reportNumber: created.reportNumber,
-        version: created.currentVersion,
-        finalizedAt: created.finalizedAt,
-        finalizedBy: { id: currentUser.id, username: (currentUser as any).username, role: currentUser.role },
-      };
+      await this.audit.record(currentUser, AuditAction.FINALIZE, 'FinalReport', created.id, {
+        orderId: order.id, reportNumber, version: 1,
+      }, tx);
 
       return {
         order,
         samples,
         normalized,
         revision: (order.revision ?? 0) + 2,
-        finalReport,
+        finalReport: {
+          ...snapshot,
+          id: created.id,
+          reportNumber: created.reportNumber,
+          version: created.currentVersion,
+          finalizedAt: created.finalizedAt,
+          finalizedBy: { id: currentUser.id, username: (currentUser as any).username, role: currentUser.role },
+        },
       };
     }, { timeout: 30000 });
 
     if (!shouldFinalize) return this.optimizedResults.findOne(currentUser, workflow.order.id);
     return workflow.finalReport;
+  }
+
+  private async resolvePatientOptimized(currentUser: AuthUser, body: CompleteReportBody) {
+    const patientId = typeof body.patientId === 'string' ? body.patientId.trim() : '';
+    const payload = body.patient ?? {};
+    if (patientId) {
+      const hasPatientPayload = Object.values(payload).some(
+        (value) => value !== undefined && value !== null && String(value).trim() !== '',
+      );
+      if (!hasPatientPayload) {
+        const existing = await this.optimizedPrisma.patient.findFirst({
+          where: { id: patientId, labId: currentUser.labId },
+        });
+        if (!existing) throw new NotFoundException('Patient not found');
+        return existing;
+      }
+      return this.optimizedPatients.update(currentUser, patientId, payload);
+    }
+
+    const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+    const mobile = typeof payload.mobile === 'string' ? payload.mobile.trim() : '';
+    if (mobile) {
+      const existing = await this.optimizedPrisma.patient.findFirst({
+        where: {
+          labId: currentUser.labId,
+          mobile,
+          ...(name ? { name: { equals: name, mode: 'insensitive' } } : {}),
+        },
+        select: { id: true },
+      });
+      if (existing) return this.optimizedPatients.update(currentUser, existing.id, payload);
+    }
+    return this.optimizedPatients.create(currentUser, payload);
   }
 }
