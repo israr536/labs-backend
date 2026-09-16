@@ -1,0 +1,137 @@
+name: Apply complete report performance migration
+
+on:
+  push:
+    branches: [perf/dashboard-report-optimization]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: "!contains(github.event.head_commit.message, 'perf: complete report transaction workflow')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Apply transaction optimizations
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          import re
+
+          def read(path):
+              return Path(path).read_text()
+
+          def write(path, text):
+              Path(path).write_text(text)
+
+          # AuditService: allow audit writes to participate in the caller transaction.
+          path = 'src/audit/audit.service.ts'
+          text = read(path)
+          old = """  async record(currentUser: AuthUser, action: AuditAction, entity: string, entityId?: string, metadata?: Prisma.InputJsonValue) {\n    return this.prisma.auditLog.create({\n      data: { labId: currentUser.labId, actorId: currentUser.id, action, entity, entityId, metadata },\n    });\n  }"""
+          new = """  async record(\n    currentUser: AuthUser,\n    action: AuditAction,\n    entity: string,\n    entityId?: string,\n    metadata?: Prisma.InputJsonValue,\n    tx?: Prisma.TransactionClient,\n  ) {\n    const db = tx ?? this.prisma;\n    return db.auditLog.create({\n      data: { labId: currentUser.labId, actorId: currentUser.id, action, entity, entityId, metadata },\n    });\n  }"""
+          if old not in text:
+              raise SystemExit('AuditService target not found')
+          write(path, text.replace(old, new))
+
+          # ResultsService: keep result save/verification audit records atomic with the workflow transaction.
+          path = 'src/results/results.service.ts'
+          text = read(path)
+          old = "await this.audit.record(currentUser, AuditAction.UPDATE, 'LabOrderResults', order.id, { operation: 'SAVE_RESULTS', orderRevision: revision + 1, createdCount: createdParameterIds.length, updatedCount: changedParameterIds.length, createdParameterIds, updatedParameterIds: changedParameterIds });"
+          new = "await this.audit.record(currentUser, AuditAction.UPDATE, 'LabOrderResults', order.id, { operation: 'SAVE_RESULTS', orderRevision: revision + 1, createdCount: createdParameterIds.length, updatedCount: changedParameterIds.length, createdParameterIds, updatedParameterIds: changedParameterIds }, options.tx);"
+          if old not in text:
+              raise SystemExit('ResultsService save audit target not found')
+          text = text.replace(old, new)
+          old = "await this.audit.record(currentUser, AuditAction.VERIFY, 'LabOrderResults', order.id, { operation: 'VERIFY_RESULTS', resultCount: resultKeys.length, resultIds, resultKeys });"
+          new = "await this.audit.record(currentUser, AuditAction.VERIFY, 'LabOrderResults', order.id, { operation: 'VERIFY_RESULTS', resultCount: resultKeys.length, resultIds, resultKeys }, options.tx);"
+          if old not in text:
+              raise SystemExit('ResultsService verify audit target not found')
+          write(path, text.replace(old, new))
+
+          # FinalReportsService: support joining an existing transaction instead of opening a second one.
+          path = 'src/final-reports/final-reports.service.ts'
+          text = read(path)
+          old = "import { AuditAction, OrderStatus, SampleStatus } from '@prisma/client';"
+          new = "import { AuditAction, OrderStatus, SampleStatus, Prisma } from '@prisma/client';"
+          if old not in text:
+              raise SystemExit('FinalReportsService import target not found')
+          text = text.replace(old, new, 1)
+
+          old = "async finalize(currentUser: AuthUser, orderId: string, loadedOrder?: any) {"
+          new = "async finalize(currentUser: AuthUser, orderId: string, loadedOrder?: any, options: { tx?: Prisma.TransactionClient; skipAudit?: boolean } = {}) {"
+          if old not in text:
+              raise SystemExit('FinalReportsService signature target not found')
+          text = text.replace(old, new, 1)
+
+          old = "    const lab = order.lab ?? (await this.prisma.lab.findUnique({"
+          new = "    const db = options.tx ?? this.prisma;\n\n    const lab = order.lab ?? (await db.lab.findUnique({"
+          if old not in text:
+              raise SystemExit('FinalReportsService db target not found')
+          text = text.replace(old, new, 1)
+
+          pattern = re.compile(r"    const report = await this\\.prisma\\.\\$transaction\\(async \\(tx\\) => \\{\\n(?P<body>.*?)\\n    \\}\\);\\n\\n    await this\\.audit\\.record\\(\n(?P<audit>.*?)\n    \\);", re.S)
+          match = pattern.search(text)
+          if not match:
+              raise SystemExit('FinalReportsService transaction/audit block not found')
+          body = match.group('body')
+          replacement = """    const write = async (tx: Prisma.TransactionClient) => {\n""" + body + """\n    };\n    const report = options.tx ? await write(options.tx) : await this.prisma.$transaction(write);\n\n    if (!options.skipAudit) {\n      await this.audit.record(\n""" + match.group('audit') + """,\n        options.tx,\n      );\n    }"""
+          text = text[:match.start()] + replacement + text[match.end():]
+          write(path, text)
+
+          # OrdersService: perform finalization inside the same transaction and avoid no-op patient updates.
+          path = 'src/orders/orders.service.ts'
+          text = read(path)
+
+          old = "{ reload: false, tx, loadedOrder: { ...order, patient, samples, status: OrderStatus.REGISTERED, results: [] } })"
+          new = "{ reload: false, tx, skipAudit: true, loadedOrder: { ...order, patient, samples, status: OrderStatus.REGISTERED, results: [] } })"
+          if old not in text:
+              raise SystemExit('OrdersService save options target not found')
+          text = text.replace(old, new, 1)
+
+          old = "await this.resultsService.verifyLoaded(currentUser, verificationOrder, { reload: false, tx });"
+          new = "await this.resultsService.verifyLoaded(currentUser, verificationOrder, { reload: false, tx, skipAudit: true });"
+          if old not in text:
+              raise SystemExit('OrdersService verify options target not found')
+          text = text.replace(old, new, 1)
+
+          old = """      await this.resultsService.verifyLoaded(currentUser, verificationOrder, { reload: false, tx, skipAudit: true });\n      return { order, samples, normalized, revision: ((order as any).revision ?? 0) + 2 };"""
+          new = """      await this.resultsService.verifyLoaded(currentUser, verificationOrder, { reload: false, tx, skipAudit: true });\n\n      const finalReport = await this.finalReportsService.finalize(\n        currentUser,\n        order.id,\n        {\n          ...verificationOrder,\n          status: OrderStatus.VERIFIED,\n          revision: ((order as any).revision ?? 0) + 2,\n        },\n        { tx },\n      );\n      return { order, samples, normalized, revision: ((order as any).revision ?? 0) + 2, finalReport };"""
+          if old not in text:
+              raise SystemExit('OrdersService finalization insertion target not found')
+          text = text.replace(old, new, 1)
+
+          old = """    if (!shouldFinalize) return this.resultsService.findOne(currentUser, workflow.order.id);\n\n    const verificationOrder = {\n      ...workflow.order,\n      patient,\n      samples: workflow.samples,\n      status: OrderStatus.VERIFIED,\n      revision: workflow.revision,\n      items: (workflow.order.items as any[]).map((item) => ({\n        ...item,\n        results: workflow.normalized.filter((result: any) => result.orderItemId === item.id).map((result: any) => ({ ...result, id: undefined, verifiedAt: new Date() })),\n      })),\n      lab: (workflow.order as any).lab,\n    });\n    return this.finalReportsService.finalize(currentUser, workflow.order.id, verificationOrder);"""
+          new = """    if (!shouldFinalize) return this.resultsService.findOne(currentUser, workflow.order.id);\n    return workflow.finalReport;"""
+          if old not in text:
+              raise SystemExit('OrdersService external finalization block not found')
+          text = text.replace(old, new, 1)
+
+          old = """    if (patientId) return this.patientsService.update(currentUser, patientId, payload);"""
+          new = """    if (patientId) {\n      const hasPatientPayload = Object.values(payload).some(\n        (value) => value !== undefined && value !== null && String(value).trim() !== '',\n      );\n      if (!hasPatientPayload) {\n        const existing = await this.prisma.patient.findFirst({\n          where: { id: patientId, labId: currentUser.labId },\n        });\n        if (!existing) throw new NotFoundException('Patient not found');\n        return existing;\n      }\n      return this.patientsService.update(currentUser, patientId, payload);\n    }"""
+          if old not in text:
+              raise SystemExit('OrdersService patient target not found')
+          text = text.replace(old, new, 1)
+
+          write(path, text)
+          print('Applied complete report transaction optimization changes.')
+          PY
+
+      - name: Validate and commit
+        run: |
+          npm install --no-audit --no-fund
+          npx prisma generate
+          npm run build
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/audit/audit.service.ts src/results/results.service.ts src/final-reports/final-reports.service.ts src/orders/orders.service.ts
+          git diff --cached --check
+          git diff --cached --quiet && echo 'No changes to commit' && exit 0
+          git commit -m 'perf: complete report transaction workflow'
+          git push origin HEAD:perf/dashboard-report-optimization
