@@ -11,7 +11,7 @@ import { ResultsService } from '../results/results.service';
 import { FinalReportsService } from '../final-reports/final-reports.service';
 
 interface CreateOrderBody { patientId?: unknown; testIds?: unknown; referredBy?: unknown; clinicalNotes?: unknown }
-export interface CompleteReportBody { patientId?: unknown; patient?: { name?: unknown; dateOfBirth?: unknown; age?: unknown; gender?: unknown; mobile?: unknown; email?: unknown; address?: unknown }; testIds?: unknown; parametersByTest?: Record<string, Array<{ name?: unknown; value?: unknown }>>; referredBy?: unknown; clinicalNotes?: unknown; status?: unknown; }
+export interface CompleteReportBody { patientId?: unknown; patient?: { name?: unknown; dateOfBirth?: unknown; age?: unknown; gender?: unknown; mobile?: unknown; email?: unknown; address?: unknown }; testIds?: unknown; parametersByTest?: Record<string, Array<{ name?: unknown; value?: unknown }>>; referredBy?: unknown; clinicalNotes?: unknown; status?: unknown; idempotencyKey?: string; }
 
 @Injectable()
 export class OrdersService {

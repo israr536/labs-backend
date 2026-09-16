@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { OrderStatus, UserRole } from '@prisma/client';
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -21,8 +21,8 @@ export class OrdersController {
 
   @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN)
   @Post('complete')
-  createCompleteReport(@CurrentUser() user: AuthUser, @Body() body: unknown) {
-    return this.ordersService.createCompleteReport(user, (body ?? {}) as CompleteReportBody);
+  createCompleteReport(@CurrentUser() user: AuthUser, @Body() body: unknown, @Headers('idempotency-key') idempotencyKey?: string) {
+    return this.ordersService.createCompleteReport(user, { ...((body ?? {}) as CompleteReportBody), idempotencyKey });
   }
 
   @Get()

@@ -74,6 +74,18 @@ enum AuditAction {
   DOWNLOAD
 }
 
+enum IdempotencyStatus {
+  PROCESSING
+  COMPLETED
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
 model Lab {
   id String @id @default(uuid())
   code String @unique
@@ -450,6 +462,38 @@ model AuditLog {
   @@index([labId, entity, entityId])
   @@index([labId, entity, entityId, action, createdAt])
   @@index([actorId])
+}
+
+model IdempotencyRecord {
+  id String @id @default(uuid())
+  labId String
+  actorId String
+  key String
+  status IdempotencyStatus @default(PROCESSING)
+  response Json?
+  createdAt DateTime @default(now())
+  completedAt DateTime?
+  expiresAt DateTime
+  @@unique([labId, key])
+  @@index([expiresAt])
+}
+
+model OutboxEvent {
+  id String @id @default(uuid())
+  labId String
+  eventType String
+  aggregateType String
+  aggregateId String
+  payload Json
+  status OutboxStatus @default(PENDING)
+  attempts Int @default(0)
+  availableAt DateTime @default(now())
+  lockedAt DateTime?
+  processedAt DateTime?
+  lastError String?
+  createdAt DateTime @default(now())
+  @@index([status, availableAt, createdAt])
+  @@index([labId, aggregateType, aggregateId])
 }
 
 model RefreshToken {

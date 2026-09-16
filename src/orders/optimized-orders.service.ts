@@ -1,7 +1,7 @@
 import { BadRequestException, NotFoundException, Injectable } from '@nestjs/common';
-import { AuditAction, OrderStatus, SampleStatus } from '@prisma/client';
+import { AuditAction, OrderStatus, Prisma, SampleStatus } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
-import { AuditService } from '../audit/audit.service';
+import { OutboxService } from '../audit/outbox.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionService } from '../labs/subscription.service';
 import { TestsService } from '../tests/tests.service';
@@ -26,12 +26,17 @@ export class OptimizedOrdersService extends OrdersService {
     private readonly optimizedSamples: SamplesService,
     private readonly optimizedResults: ResultsService,
     private readonly optimizedFinalReports: FinalReportsService,
-    private readonly audit: AuditService,
+    private readonly outbox: OutboxService,
   ) {
     super(prisma, subscriptionService, testsService, patientsService, samplesService, resultsService, finalReportsService);
   }
 
   async createCompleteReport(currentUser: AuthUser, body: CompleteReportBody) {
+    const startedAt = performance.now();
+    const mark = (stage: string) => console.info(JSON.stringify({ type: 'complete.performance', stage, durationMs: Math.round((performance.now() - startedAt) * 100) / 100 }));
+    const idempotency = await this.beginIdempotency(currentUser, body.idempotencyKey);
+    if (idempotency?.response) return idempotency.response;
+    mark('started');
     const requestedStatus = typeof body.status === 'string' ? body.status.trim() : '';
     const shouldFinalize = requestedStatus === 'Completed' || requestedStatus === 'Critical';
     if (shouldFinalize && currentUser.role !== 'ADMIN' && currentUser.role !== 'TECHNICIAN') {
@@ -39,12 +44,14 @@ export class OptimizedOrdersService extends OrdersService {
     }
 
     const patient = await this.resolvePatientOptimized(currentUser, body);
+    mark('patient-resolved');
     const base = this as any;
     const testIds = base.normalizeTestIds(body.testIds);
     if (!testIds.length) throw new BadRequestException('Please select at least one configured laboratory test.');
 
     const orderInput = { patientId: patient.id, testIds, referredBy: body.referredBy, clinicalNotes: body.clinicalNotes };
     const preparedOrder = await base.prepareCompleteOrder(currentUser, orderInput);
+    mark('order-prepared');
     const specimenTypes = [...new Set(
       (preparedOrder.items as any[]).map((item) => item.test?.sampleType?.trim()).filter(Boolean),
     )] as string[];
@@ -106,9 +113,7 @@ export class OptimizedOrdersService extends OrdersService {
       ) as any;
 
       if (!shouldFinalize) {
-        await this.audit.record(currentUser, AuditAction.UPDATE, 'LabOrderResults', order.id, {
-          operation: 'SAVE_RESULTS', resultCount: mappedResults.length,
-        }, tx);
+        await this.enqueueAudit(tx, currentUser, AuditAction.UPDATE, 'LabOrderResults', order.id, { operation: 'SAVE_RESULTS', resultCount: mappedResults.length });
         return { order, samples, normalized: saved.normalized ?? [], revision: (order.revision ?? 0) + 1, finalReport: null };
       }
 
@@ -136,12 +141,8 @@ export class OptimizedOrdersService extends OrdersService {
 
       await this.optimizedResults.verifyLoaded(currentUser, verificationOrder, { reload: false, tx, skipAudit: true });
 
-      await this.audit.record(currentUser, AuditAction.UPDATE, 'LabOrderResults', order.id, {
-        operation: 'SAVE_RESULTS', resultCount: mappedResults.length,
-      }, tx);
-      await this.audit.record(currentUser, AuditAction.VERIFY, 'LabOrderResults', order.id, {
-        operation: 'VERIFY_RESULTS', resultCount: normalized.length,
-      }, tx);
+      await this.enqueueAudit(tx, currentUser, AuditAction.UPDATE, 'LabOrderResults', order.id, { operation: 'SAVE_RESULTS', resultCount: mappedResults.length });
+      await this.enqueueAudit(tx, currentUser, AuditAction.VERIFY, 'LabOrderResults', order.id, { operation: 'VERIFY_RESULTS', resultCount: normalized.length });
 
       const finalizedAt = new Date();
       const lab = (order as any).lab ?? preparedOrder.lab;
@@ -200,6 +201,8 @@ export class OptimizedOrdersService extends OrdersService {
       });
       if (finalized.count !== 1) throw new BadRequestException('Order could not be finalized because its status changed.');
 
+      await this.enqueueAudit(tx, currentUser, AuditAction.FINALIZE, 'FinalReport', created.id, { orderId: order.id, reportNumber, version: 1 });
+
       return {
         order,
         samples,
@@ -215,14 +218,44 @@ export class OptimizedOrdersService extends OrdersService {
         },
       };
     }, { timeout: 30000 });
+    mark('transaction-committed');
 
-    if (!shouldFinalize) return this.optimizedResults.findOne(currentUser, workflow.order.id);
-    await this.audit.record(currentUser, AuditAction.FINALIZE, 'FinalReport', workflow.finalReport.id, {
-      orderId: workflow.order.id,
-      reportNumber: workflow.finalReport.reportNumber,
-      version: workflow.finalReport.version,
-    });
-    return workflow.finalReport;
+    const response = shouldFinalize ? workflow.finalReport : await this.optimizedResults.findOne(currentUser, workflow.order.id);
+    if (idempotency) await this.completeIdempotency(idempotency.id, response);
+    mark('response-ready');
+    return response;
+  }
+
+  private async enqueueAudit(tx: Prisma.TransactionClient, user: AuthUser, action: AuditAction, entity: string, entityId: string, metadata: Prisma.InputJsonValue) {
+    return this.outbox.enqueue(tx, user.labId, 'AUDIT_LOG', entity, entityId, { actorId: user.id, action, entity, entityId, metadata });
+  }
+
+  private async beginIdempotency(user: AuthUser, rawKey?: string) {
+    const key = rawKey?.trim();
+    if (!key) return null;
+    if (key.length > 128) throw new BadRequestException('Idempotency-Key must be at most 128 characters');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    try {
+      const created = await this.optimizedPrisma.idempotencyRecord.create({ data: { labId: user.labId, actorId: user.id, key, expiresAt } });
+      return { id: created.id, response: null as unknown };
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error;
+      const existing = await this.optimizedPrisma.idempotencyRecord.findUnique({ where: { labId_key: { labId: user.labId, key } } });
+      if (existing?.expiresAt && existing.expiresAt < new Date()) {
+        await this.optimizedPrisma.idempotencyRecord.delete({ where: { id: existing.id } });
+        return this.beginIdempotency(user, key);
+      }
+      if (existing?.status === 'COMPLETED' && existing.response) return { id: existing.id, response: existing.response };
+      if (existing && existing.createdAt < new Date(Date.now() - 5 * 60 * 1000)) {
+        const takeover = await this.optimizedPrisma.idempotencyRecord.update({ where: { id: existing.id }, data: { status: 'PROCESSING', response: Prisma.JsonNull, completedAt: null, expiresAt } });
+        return { id: takeover.id, response: null as unknown };
+      }
+      throw new BadRequestException('A request with this Idempotency-Key is already being processed');
+    }
+  }
+
+  private completeIdempotency(id: string, response: unknown) {
+    return this.optimizedPrisma.idempotencyRecord.update({ where: { id }, data: { status: 'COMPLETED', response: response as Prisma.InputJsonValue, completedAt: new Date() } });
   }
 
   private async resolvePatientOptimized(currentUser: AuthUser, body: CompleteReportBody) {
