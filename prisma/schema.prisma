@@ -6,169 +6,104 @@ datasource db {
   provider = "postgresql"
 }
 
-enum UserRole {
-  ADMIN
-  TECHNICIAN
-  RECEPTIONIST
-  PATHOLOGIST
-}
-
-enum Gender {
-  MALE
-  FEMALE
-  OTHER
-}
-
-enum ReportStatus {
-  DRAFT
-  FINAL
-}
-
-enum ResultFlag {
-  LOW
-  NORMAL
-  HIGH
-}
-
-enum ParameterInputType {
-  NUMBER
-  TEXT
-  SELECT
-  MULTILINE_TEXT
-  BOOLEAN
-  DATE
-  DATETIME
-  TIME
-  PERCENTAGE
-  QUALITATIVE
-}
-
-enum OrderStatus {
-  REGISTERED
-  SAMPLE_COLLECTED
-  PROCESSING
-  RESULT_ENTERED
-  VERIFIED
-  FINAL
-  CANCELLED
-}
-
-enum SampleStatus {
-  PENDING
-  COLLECTED
-  RECEIVED
-  PROCESSING
-  COMPLETED
-  REJECTED
-}
-
-enum AuditAction {
-  CREATE
-  UPDATE
-  DELETE
-  VERIFY
-  FINALIZE
-  AMEND
-  LOGIN
-  LOGOUT
-  DOWNLOAD
-}
+enum UserRole { ADMIN TECHNICIAN RECEPTIONIST PATHOLOGIST }
+enum Gender { MALE FEMALE OTHER }
+enum ReportStatus { DRAFT FINAL }
+enum ResultFlag { LOW NORMAL HIGH }
+enum ParameterInputType { NUMBER TEXT SELECT MULTILINE_TEXT BOOLEAN DATE DATETIME TIME PERCENTAGE QUALITATIVE }
+enum OrderStatus { REGISTERED SAMPLE_COLLECTED PROCESSING RESULT_ENTERED VERIFIED FINAL CANCELLED }
+enum SampleStatus { PENDING COLLECTED RECEIVED PROCESSING COMPLETED REJECTED }
+enum AuditAction { CREATE UPDATE DELETE VERIFY FINALIZE AMEND LOGIN LOGOUT DOWNLOAD }
 
 model Lab {
-  id                  String    @id @default(uuid())
-  code                String    @unique
-  name                String
-  mobile              String
-  email               String?
-  address             String?
-  icon                String?
-  showMethodNames     Boolean   @default(true)
-  isActive            Boolean   @default(true)
-  subscriptionPlan    String?
+  id String @id @default(uuid())
+  code String @unique
+  name String
+  mobile String
+  email String?
+  address String?
+  icon String?
+  showMethodNames Boolean @default(true)
+  isActive Boolean @default(true)
+  subscriptionPlan String?
   subscriptionStartAt DateTime?
-  subscriptionEndAt   DateTime?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-
+  subscriptionEndAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   patients Patient[]
-  reports  Report[]
-  tests    Test[]
-  users    User[]
-  orders   LabOrder[]
-  samples  Sample[]
+  reports Report[]
+  tests Test[]
+  users User[]
+  orders LabOrder[]
+  samples Sample[]
   finalReports FinalReport[]
   auditLogs AuditLog[]
 }
 
 model User {
-  id        String   @id @default(uuid())
-  labId     String
-  username  String   @unique
-  mobile    String
-  email     String?
-  password  String
-  role      UserRole
-  isActive  Boolean  @default(true)
+  id String @id @default(uuid())
+  labId String
+  username String @unique
+  mobile String
+  email String?
+  password String
+  role UserRole
+  isActive Boolean @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  lab            Lab            @relation(fields: [labId], references: [id])
-  createdReports Report[]       @relation("ReportCreatedBy")
-  refreshTokens  RefreshToken[]
-  createdOrders  LabOrder[]     @relation("OrderCreatedBy")
+  lab Lab @relation(fields: [labId], references: [id])
+  createdReports Report[] @relation("ReportCreatedBy")
+  refreshTokens RefreshToken[]
+  createdOrders LabOrder[] @relation("OrderCreatedBy")
   verifiedResults OrderResult[] @relation("OrderResultVerifiedBy")
   finalizedReports FinalReport[] @relation("FinalReportFinalizedBy")
-  auditLogs User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
-
+  auditLogs AuditLog[] @relation("AuditActor")
+  finalReportVersions FinalReportVersion[] @relation("VersionCreatedBy")
   @@index([labId])
 }
 
 model Patient {
-  id          String    @id @default(uuid())
-  labId       String
-  name        String
+  id String @id @default(uuid())
+  labId String
+  name String
   dateOfBirth DateTime?
-  age         Int?
-  gender      Gender
-  mobile      String?
-  email       String?
-  address     String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  lab     Lab        @relation(fields: [labId], references: [id])
+  age Int?
+  gender Gender
+  mobile String?
+  email String?
+  address String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lab Lab @relation(fields: [labId], references: [id])
   reports Report[]
-  orders  LabOrder[]
-
+  orders LabOrder[]
   @@index([labId])
   @@index([labId, createdAt])
 }
 
 model TestDefinition {
-  id             String   @id @default(uuid())
-  code           String   @unique
-  shortName      String?
-  name           String
-  category       String
-  department     String
-  specimenType   String?
-  container      String?
-  method         String?
-  tat            Int?
-  fasting        Boolean  @default(false)
+  id String @id @default(uuid())
+  code String @unique
+  shortName String?
+  name String
+  category String
+  department String
+  specimenType String?
+  container String?
+  method String?
+  tat Int?
+  fasting Boolean @default(false)
   sampleHandling String?
-  stability      String?
+  stability String?
   rejectionCriteria String?
-  description    String?
-  synonyms       Json?
-  externalCodes  Json?
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
+  description String?
+  synonyms Json?
+  externalCodes Json?
+  isActive Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   parameters TestDefinitionParameter[]
-  tests      Test[]
-
+  tests Test[]
   @@index([category])
   @@index([department])
   @@index([name])
@@ -176,58 +111,54 @@ model TestDefinition {
 }
 
 model TestDefinitionParameter {
-  id               String             @id @default(uuid())
+  id String @id @default(uuid())
   testDefinitionId String
-  code             String
-  name             String
-  shortName        String?
-  inputType        ParameterInputType @default(NUMBER)
-  unit             String?
-  normalMin        Float?
-  normalMax        Float?
-  referenceRange   Json?
-  options          Json?
-  validation       Json?
-  criticalLow      Float?
-  criticalHigh     Float?
-  decimalPlaces    Int?
-  defaultValue     String?
-  formula          String?
-  displayOrder     Int                @default(0)
-  isRequired       Boolean            @default(true)
-  remarks          String?
-
+  code String
+  name String
+  shortName String?
+  inputType ParameterInputType @default(NUMBER)
+  unit String?
+  normalMin Float?
+  normalMax Float?
+  referenceRange Json?
+  options Json?
+  validation Json?
+  criticalLow Float?
+  criticalHigh Float?
+  decimalPlaces Int?
+  defaultValue String?
+  formula String?
+  displayOrder Int @default(0)
+  isRequired Boolean @default(true)
+  remarks String?
   testDefinition TestDefinition @relation(fields: [testDefinitionId], references: [id], onDelete: Cascade)
-
   @@unique([testDefinitionId, code])
   @@index([testDefinitionId, displayOrder])
 }
 
 model Test {
-  id          String   @id @default(uuid())
-  labId       String
-  scopeId     String
-  catalogId   String?
-  code        String
-  shortName   String?
-  name        String
-  category    String?
-  department  String?
-  sampleType  String?
-  price       Float?
-  tat         Int?
-  method      String?
-  remarks     String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  lab         Lab             @relation(fields: [labId], references: [id])
-  catalog     TestDefinition? @relation(fields: [catalogId], references: [id], onDelete: SetNull)
-  parameters  TestParameter[]
-  reports     Report[]
-  orderItems  OrderItem[]
-
+  id String @id @default(uuid())
+  labId String
+  scopeId String
+  catalogId String?
+  code String
+  shortName String?
+  name String
+  category String?
+  department String?
+  sampleType String?
+  price Float?
+  tat Int?
+  method String?
+  remarks String?
+  isActive Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lab Lab @relation(fields: [labId], references: [id])
+  catalog TestDefinition? @relation(fields: [catalogId], references: [id], onDelete: SetNull)
+  parameters TestParameter[]
+  reports Report[]
+  orderItems OrderItem[]
   @@index([labId])
   @@index([labId, scopeId])
   @@index([labId, catalogId])
@@ -237,125 +168,115 @@ model Test {
 }
 
 model TestParameter {
-  id               String             @id @default(uuid())
-  testId           String
-  name             String
-  inputType        ParameterInputType @default(NUMBER)
-  unit             String?
-  normalMin        Float?
-  normalMax        Float?
-  referenceRange   Json?
-  options          Json?
-  validation       Json?
-  criticalLow      Float?
-  criticalHigh     Float?
-  decimalPlaces    Int?
-  defaultValue     String?
-  formula          String?
-  displayOrder     Int                @default(0)
-  isRequired       Boolean            @default(true)
-  remarks          String?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-
-  test             Test               @relation(fields: [testId], references: [id], onDelete: Cascade)
-  results          ReportResult[]
-  orderResults     OrderResult[]
-  referenceRanges  TestParameterReferenceRange[]
-
+  id String @id @default(uuid())
+  testId String
+  name String
+  inputType ParameterInputType @default(NUMBER)
+  unit String?
+  normalMin Float?
+  normalMax Float?
+  referenceRange Json?
+  options Json?
+  validation Json?
+  criticalLow Float?
+  criticalHigh Float?
+  decimalPlaces Int?
+  defaultValue String?
+  formula String?
+  displayOrder Int @default(0)
+  isRequired Boolean @default(true)
+  remarks String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  test Test @relation(fields: [testId], references: [id], onDelete: Cascade)
+  results ReportResult[]
+  orderResults OrderResult[]
+  referenceRanges TestParameterReferenceRange[]
   @@index([testId])
   @@unique([testId, name])
 }
 
 model TestParameterReferenceRange {
-  id             String   @id @default(uuid())
-  parameterId    String
-  version        Int
-  gender         Gender?
-  ageMinYears    Decimal? @db.Decimal(7, 2)
-  ageMaxYears    Decimal? @db.Decimal(7, 2)
-  method         String?
-  analyzer       String?
-  low            Float?
-  high           Float?
-  displayRange   String?
-  unit           String?
-  effectiveFrom  DateTime @default(now())
-  effectiveTo    DateTime?
-  createdAt      DateTime @default(now())
-
+  id String @id @default(uuid())
+  parameterId String
+  version Int
+  gender Gender?
+  ageMinYears Decimal? @db.Decimal(7, 2)
+  ageMaxYears Decimal? @db.Decimal(7, 2)
+  method String?
+  analyzer String?
+  low Float?
+  high Float?
+  displayRange String?
+  unit String?
+  effectiveFrom DateTime @default(now())
+  effectiveTo DateTime?
+  createdAt DateTime @default(now())
   parameter TestParameter @relation(fields: [parameterId], references: [id], onDelete: Restrict)
   orderResults OrderResult[]
-
   @@unique([parameterId, version])
   @@index([parameterId, effectiveFrom])
   @@index([parameterId, gender])
 }
 
 model Report {
-  id                 String       @id @default(uuid())
-  labId              String
-  patientId          String
-  testId             String
-  reportNumber       String       @unique
-  createdById         String
-  status              ReportStatus @default(DRAFT)
-  remarks            String?
-  doctorNotes        String?
-  referredBy         String?
-  approvedBy         String?
-  sampleCollectedAt  DateTime?
-  reportedAt         DateTime?
-  createdAt           DateTime     @default(now())
-  updatedAt           DateTime     @updatedAt
-
-  createdBy User           @relation("ReportCreatedBy", fields: [createdById], references: [id])
-  lab       Lab            @relation(fields: [labId], references: [id])
-  patient   Patient        @relation(fields: [patientId], references: [id])
-  results   ReportResult[]
-  test      Test           @relation(fields: [testId], references: [id])
-
+  id String @id @default(uuid())
+  labId String
+  patientId String
+  testId String
+  reportNumber String @unique
+  createdById String
+  status ReportStatus @default(DRAFT)
+  remarks String?
+  doctorNotes String?
+  referredBy String?
+  approvedBy String?
+  sampleCollectedAt DateTime?
+  reportedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy User @relation("ReportCreatedBy", fields: [createdById], references: [id])
+  lab Lab @relation(fields: [labId], references: [id])
+  patient Patient @relation(fields: [patientId], references: [id])
+  results ReportResult[]
+  test Test @relation(fields: [testId], references: [id])
   @@index([labId])
   @@index([patientId])
   @@index([testId])
 }
 
 model ReportResult {
-  id          String      @id @default(uuid())
-  reportId    String
+  id String @id @default(uuid())
+  reportId String
   parameterId String
-  value       String
-  flag        ResultFlag?
-  createdAt   DateTime    @default(now())
-
+  value String
+  flag ResultFlag?
+  createdAt DateTime @default(now())
   parameter TestParameter @relation(fields: [parameterId], references: [id])
-  report    Report        @relation(fields: [reportId], references: [id], onDelete: Cascade)
-
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
   @@unique([reportId, parameterId])
   @@index([parameterId])
 }
 
 model LabOrder {
-  id            String      @id @default(uuid())
-  labId         String
-  patientId     String
-  orderNumber   String
-  status        OrderStatus @default(REGISTERED)
-  revision      Int         @default(0)
-  referredBy    String?
+  id String @id @default(uuid())
+  labId String
+  patientId String
+  orderNumber String
+  status OrderStatus @default(REGISTERED)
+  revision Int @default(0)
+  referredBy String?
   clinicalNotes String?
-  orderedAt     DateTime    @default(now())
-  createdById   String
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-
-  lab       Lab         @relation(fields: [labId], references: [id])
-  patient   Patient     @relation(fields: [patientId], references: [id])
-  createdBy User        @relation("OrderCreatedBy", fields: [createdById], references: [id])
-  items     OrderItem[]
-  samples   Sample[]
+  orderedAt DateTime @default(now())
+  createdById String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lab Lab @relation(fields: [labId], references: [id])
+  patient Patient @relation(fields: [patientId], references: [id])
+  createdBy User @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  items OrderItem[]
+  samples Sample[]
   finalReport FinalReport?
-
   @@unique([labId, orderNumber])
   @@index([labId, patientId, createdAt])
   @@index([labId, status, createdAt])
@@ -363,40 +284,36 @@ model LabOrder {
 }
 
 model OrderItem {
-  id        String   @id @default(uuid())
-  orderId   String
-  testId    String
-  price     Float
+  id String @id @default(uuid())
+  orderId String
+  testId String
+  price Float
   createdAt DateTime @default(now())
-
-  order   LabOrder     @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  test    Test         @relation(fields: [testId], references: [id])
+  order LabOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  test Test @relation(fields: [testId], references: [id])
   results OrderResult[]
-
   @@unique([orderId, testId])
   @@index([testId])
 }
 
 model OrderResult {
-  id           String      @id @default(uuid())
-  orderItemId  String
-  parameterId  String
-  sampleId     String?
-  value        String
-  flag          ResultFlag?
+  id String @id @default(uuid())
+  orderItemId String
+  parameterId String
+  sampleId String?
+  value String
+  flag ResultFlag?
   referenceRangeId String?
   referenceRangeSnapshot Json?
-  verifiedAt   DateTime?
+  verifiedAt DateTime?
   verifiedById String?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-
-  orderItem   OrderItem     @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
-  parameter   TestParameter @relation(fields: [parameterId], references: [id])
-  sample      Sample?       @relation(fields: [sampleId], references: [id])
-  verifiedBy  User?         @relation("OrderResultVerifiedBy", fields: [verifiedById], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  parameter TestParameter @relation(fields: [parameterId], references: [id])
+  sample Sample? @relation(fields: [sampleId], references: [id])
+  verifiedBy User? @relation("OrderResultVerifiedBy", fields: [verifiedById], references: [id])
   referenceRange TestParameterReferenceRange? @relation(fields: [referenceRangeId], references: [id], onDelete: Restrict)
-
   @@unique([orderItemId, parameterId])
   @@index([parameterId])
   @@index([sampleId])
@@ -405,79 +322,71 @@ model OrderResult {
 }
 
 model Sample {
-  id               String       @id @default(uuid())
-  labId            String
-  orderId          String
-  accessionNumber   String
-  specimenType      String
-  container         String?
-  status            SampleStatus @default(PENDING)
-  collectedAt       DateTime?
-  receivedAt        DateTime?
-  rejectedReason    String?
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
-
-  lab     Lab           @relation(fields: [labId], references: [id])
-  order   LabOrder      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  id String @id @default(uuid())
+  labId String
+  orderId String
+  accessionNumber String
+  specimenType String
+  container String?
+  status SampleStatus @default(PENDING)
+  collectedAt DateTime?
+  receivedAt DateTime?
+  rejectedReason String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lab Lab @relation(fields: [labId], references: [id])
+  order LabOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
   results OrderResult[]
-
   @@unique([labId, accessionNumber])
   @@index([labId, orderId])
   @@index([labId, status])
 }
 
 model FinalReport {
-  id            String   @id @default(uuid())
-  labId         String
-  orderId       String   @unique
-  reportNumber  String   @unique
+  id String @id @default(uuid())
+  labId String
+  orderId String @unique
+  reportNumber String @unique
   finalizedById String
-  snapshot      Json
-  currentVersion Int     @default(1)
-  finalizedAt   DateTime @default(now())
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  lab         Lab      @relation(fields: [labId], references: [id])
-  order       LabOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  finalizedBy User     @relation("FinalReportFinalizedBy", fields: [finalizedById], references: [id])
-  versions    FinalReportVersion[]
-
+  snapshot Json
+  currentVersion Int @default(1)
+  finalizedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lab Lab @relation(fields: [labId], references: [id])
+  order LabOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  finalizedBy User @relation("FinalReportFinalizedBy", fields: [finalizedById], references: [id])
+  versions FinalReportVersion[]
   @@index([labId, finalizedAt])
 }
 
 model FinalReportVersion {
-  id            String   @id @default(uuid())
+  id String @id @default(uuid())
   finalReportId String
-  version       Int
-  snapshot      Json
+  version Int
+  snapshot Json
   amendmentReason String
-  createdById   String
-  createdAt     DateTime @default(now())
-
+  createdById String
+  createdAt DateTime @default(now())
   finalReport FinalReport @relation(fields: [finalReportId], references: [id], onDelete: Cascade)
-  createdBy   User        @relation("VersionCreatedBy", fields: [createdById], references: [id])
-
+  createdBy User @relation("VersionCreatedBy", fields: [createdById], references: [id])
   @@unique([finalReportId, version])
   @@index([createdById])
 }
 
 model AuditLog {
-  id         String      @id @default(uuid())
-  labId      String
-  actorId    String?
-  action     AuditAction
-  entity     String
-  entityId   String?
-  metadata   Json?
-  ipAddress  String?
-  userAgent  String?
-  createdAt  DateTime    @default(now())
-
-  lab   Lab   @relation(fields: [labId], references: [id], onDelete: Cascade)
+  id String @id @default(uuid())
+  labId String
+  actorId String?
+  action AuditAction
+  entity String
+  entityId String?
+  metadata Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  lab Lab @relation(fields: [labId], references: [id], onDelete: Cascade)
   actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
-
   @@index([labId, createdAt])
   @@index([labId, entity, entityId])
   @@index([labId, entity, entityId, action, createdAt])
@@ -485,39 +394,36 @@ model AuditLog {
 }
 
 model RefreshToken {
-  id        String   @id @default(uuid())
-  userId    String
-  token     String
-  familyId  String   @default(uuid())
-  usedAt    DateTime?
+  id String @id @default(uuid())
+  userId String
+  token String
+  familyId String @default(uuid())
+  usedAt DateTime?
   revokedAt DateTime?
   expiresAt DateTime
   createdAt DateTime @default(now())
-
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
   @@unique([token])
   @@index([userId])
   @@index([familyId])
 }
 
 model PendingLabRegistration {
-  id                String   @id @default(uuid())
-  code              String
-  name              String
-  mobile             String
-  email             String?
-  address           String?
-  adminUsername     String
-  adminMobile       String
-  adminEmail        String?
+  id String @id @default(uuid())
+  code String
+  name String
+  mobile String
+  email String?
+  address String?
+  adminUsername String
+  adminMobile String
+  adminEmail String?
   adminPasswordHash String
-  otpHash           String
-  attempts          Int      @default(0)
-  expiresAt         DateTime
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
+  otpHash String
+  attempts Int @default(0)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   @@index([code])
   @@index([adminUsername])
   @@index([expiresAt])
