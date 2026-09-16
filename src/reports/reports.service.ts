@@ -82,13 +82,38 @@ export class ReportsService {
       { patient: { mobile: { contains: search, mode: 'insensitive' as const } } },
       { remarks: { contains: search, mode: 'insensitive' as const } },
     ];
-    return this.prisma.$transaction(async (tx) => {
-      const [total, reports] = await Promise.all([
-        tx.report.count({ where }),
-        tx.report.findMany({ where, include: this.reportInclude(), orderBy: { createdAt: 'desc' }, skip, take }),
-      ]);
-      return { data: reports, pagination: { total, skip, take, pages: Math.ceil(total / take) } };
-    });
+
+    // Listing must not hydrate the full report graph. Full test parameters/results
+    // are loaded only by findOne/generate when a report is actually opened.
+    const [total, reports] = await Promise.all([
+      this.prisma.report.count({ where }),
+      this.prisma.report.findMany({
+        where,
+        select: {
+          id: true,
+          labId: true,
+          patientId: true,
+          testId: true,
+          reportNumber: true,
+          status: true,
+          remarks: true,
+          doctorNotes: true,
+          referredBy: true,
+          approvedBy: true,
+          sampleCollectedAt: true,
+          reportedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          patient: { select: { id: true, name: true, age: true, gender: true, mobile: true } },
+          test: { select: { id: true, code: true, name: true, category: true, department: true, sampleType: true } },
+          createdBy: { select: { id: true, username: true, role: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
+    return { data: reports, pagination: { total, skip, take, pages: Math.ceil(total / take) } };
   }
 
   async findOne(currentUser: AuthUser, id: string) {
@@ -179,7 +204,6 @@ export class ReportsService {
       const parameter = parameterById.get(parameterId);
       if (!parameter) throw new BadRequestException(`results.${index}.parameterId does not belong to this test`);
       const value = normalizeResultValue(result.value, `results.${index}.value`);
-      // Draft reports may omit required results; finalization enforces required fields.
       if (value === '') return;
       this.validateParameterValue(parameter, value, `results.${index}.value`);
       output.push({ parameterId, value, flag: this.calculateFlag(parameter, value) });
