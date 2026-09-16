@@ -99,7 +99,10 @@ export class OrdersService {
       samples: workflow.samples,
       status: OrderStatus.VERIFIED,
       revision: workflow.revision,
-      items: (workflow.order.items as any[]).map((item) => ({ ...item, results: workflow.normalized.filter((result: any) => result.orderItemId === item.id).map((result: any) => ({ ...result, id: undefined, verifiedAt: new Date() })) })),
+      items: (workflow.order.items as any[]).map((item) => ({
+        ...item,
+        results: workflow.normalized.filter((result: any) => result.orderItemId === item.id).map((result: any) => ({ ...result, id: undefined, verifiedAt: new Date() })),
+      })),
       lab: (workflow.order as any).lab,
     };
     return this.finalReportsService.finalize(currentUser, workflow.order.id, verificationOrder);
@@ -110,8 +113,26 @@ export class OrdersService {
     if (!Array.isArray(body.testIds) || body.testIds.length === 0) throw new BadRequestException('testIds must contain at least one test');
     const testIds = [...new Set(body.testIds.map((value, index) => requiredString(value, `testIds.${index}`)))];
     const [actualTests, lab] = await Promise.all([
-      this.prisma.test.findMany({ where: { id: { in: testIds }, labId: currentUser.labId, isActive: true }, select: { id: true, catalogId: true, code: true, name: true, category: true, department: true, sampleType: true, price: true, method: true, remarks: true, parameters: { orderBy: { displayOrder: 'asc' }, select: { id: true, name: true, inputType: true, unit: true, normalMin: true, normalMax: true, referenceRange: true, options: true, validation: true, criticalLow: true, criticalHigh: true, decimalPlaces: true, defaultValue: true, formula: true, displayOrder: true, isRequired: true, remarks: true } } } },
-      this.prisma.lab.findUnique({ where: { id: currentUser.labId }, select: { id: true, code: true, name: true, mobile: true, email: true, address: true, icon: true } }),
+      this.prisma.test.findMany({
+        where: { id: { in: testIds }, labId: currentUser.labId, isActive: true },
+        select: {
+          id: true, catalogId: true, code: true, name: true, category: true, department: true,
+          sampleType: true, price: true, method: true, remarks: true,
+          parameters: {
+            orderBy: { displayOrder: 'asc' },
+            select: {
+              id: true, name: true, inputType: true, unit: true, normalMin: true, normalMax: true,
+              referenceRange: true, options: true, validation: true, criticalLow: true, criticalHigh: true,
+              decimalPlaces: true, defaultValue: true, formula: true, displayOrder: true,
+              isRequired: true, remarks: true,
+            },
+          },
+        },
+      }),
+      this.prisma.lab.findUnique({
+        where: { id: currentUser.labId },
+        select: { id: true, code: true, name: true, mobile: true, email: true, address: true, icon: true },
+      }),
     ]);
     const actualById = new Map(actualTests.map((test) => [test.id, test]));
     const missingIds = testIds.filter((id) => !actualById.has(id));
@@ -127,6 +148,7 @@ export class OrdersService {
   private async createFastCompleteOrder(currentUser: AuthUser, body: CreateOrderBody, tx?: Prisma.TransactionClient, prepared?: any) {
     const patientId = requiredString(body.patientId, 'patientId');
     if (!Array.isArray(body.testIds) || body.testIds.length === 0) throw new BadRequestException('testIds must contain at least one test');
+    const testIds = [...new Set(body.testIds.map((value, index) => requiredString(value, `testIds.${index}`)))];
     const source = prepared ?? await this.prepareCompleteOrder(currentUser, body);
     const tests = source.items.map((item: any) => item.test);
     const run = async (db: Prisma.TransactionClient) => {
@@ -152,7 +174,9 @@ export class OrdersService {
     return this.patientsService.create(currentUser, payload);
   }
 
-  private async auditWorkflow(currentUser: AuthUser, orderId: string, finalized: boolean, resultCount: number, normalizedCount: number) { console.info(`[PERF] complete:workflow-committed order=${orderId} results=${resultCount} normalized=${normalizedCount} finalized=${finalized}`); }
+  private async auditWorkflow(currentUser: AuthUser, orderId: string, finalized: boolean, resultCount: number, normalizedCount: number) {
+    console.info(`[PERF] complete:workflow-committed order=${orderId} results=${resultCount} normalized=${normalizedCount} finalized=${finalized}`);
+  }
 
   async updateReport(currentUser: AuthUser, orderId: string, body: Record<string, unknown>) {
     const order = await this.resultsService.getOrderForWorkflow(currentUser, orderId) as any;
@@ -176,29 +200,86 @@ export class OrdersService {
           email: typeof patient.email === 'string' ? patient.email.trim() || null : undefined,
           address: typeof patient.address === 'string' ? patient.address.trim() || null : undefined,
         };
-        const rows = await tx.patient.updateManyAndReturn({ where: { id: order.patientId, labId: currentUser.labId }, data: updateData, select: { id: true, name: true, age: true, gender: true, mobile: true, email: true, address: true } });
-        if (rows[0]) updatedPatient = { ...order.patient, ...rows[0] };
+        const rows = await tx.patient.updateManyAndReturn({ where: { id: order.patientId, labId: currentUser.labId }, data: updateData as any });
+        if (rows.length !== 1) throw new NotFoundException('Patient not found');
+        updatedPatient = rows[0];
       }
-      const saved = await this.resultsService.save(currentUser, orderId, { results }, { reload: false, tx, loadedOrder: { ...order, patient: updatedPatient }, skipAudit: true }) as any;
-      return { saved, updatedPatient };
+      await tx.labOrder.updateMany({ where: { id: orderId, labId: currentUser.labId, revision: expectedRevision, status: { notIn: [OrderStatus.FINAL, OrderStatus.VERIFIED] } }, data: { referredBy: typeof body.referredBy === 'string' ? body.referredBy.trim() : undefined, clinicalNotes: typeof body.clinicalNotes === 'string' ? body.clinicalNotes.trim() : undefined } });
+      if (results.length) {
+        const saved = await this.resultsService.save(currentUser, orderId, { results }, { reload: false, tx, loadedOrder: order, skipAudit: true }) as any;
+        return { patient: updatedPatient, normalized: saved.normalized ?? [] };
+      }
+      return { patient: updatedPatient, normalized: [] };
     }, { timeout: 30000 });
-    if (!shouldFinalize) return this.resultsService.findOne(currentUser, orderId);
-    return this.finalReportsService.finalize(currentUser, orderId, { ...(transactionResult.saved?.order ?? order), patient: transactionResult.updatedPatient });
+
+    if (shouldFinalize) {
+      const refreshed = await this.resultsService.getOrderForWorkflow(currentUser, orderId) as any;
+      if (refreshed.status !== OrderStatus.RESULT_ENTERED) throw new BadRequestException('Results are required before finalization');
+      await this.resultsService.verify(currentUser, orderId);
+      return this.finalReportsService.finalize(currentUser, orderId);
+    }
+    return this.resultsService.findOne(currentUser, orderId);
   }
 
   async findOne(currentUser: AuthUser, id: string) {
-    const order = await this.prisma.labOrder.findFirst({ where: { id, labId: currentUser.labId }, select: {
-      id: true, labId: true, patientId: true, orderNumber: true, status: true, revision: true, referredBy: true, clinicalNotes: true, orderedAt: true, createdAt: true, updatedAt: true,
-      patient: { select: { id: true, name: true, dateOfBirth: true, age: true, gender: true, mobile: true, email: true, address: true } },
-      items: { select: { id: true, orderId: true, testId: true, price: true, createdAt: true, test: { select: { id: true, catalogId: true, code: true, shortName: true, name: true, category: true, department: true, sampleType: true, method: true, remarks: true, parameters: { orderBy: { displayOrder: 'asc' }, select: { id: true, testId: true, name: true, inputType: true, unit: true, normalMin: true, normalMax: true, referenceRange: true, options: true, validation: true, criticalLow: true, criticalHigh: true, decimalPlaces: true, defaultValue: true, formula: true, displayOrder: true, isRequired: true, remarks: true } } }, results: { select: { id: true, orderItemId: true, parameterId: true, sampleId: true, value: true, flag: true, referenceRangeId: true, referenceRangeSnapshot: true, verifiedAt: true, verifiedById: true, createdAt: true, updatedAt: true } } } },
-      samples: { select: { id: true, labId: true, orderId: true, accessionNumber: true, specimenType: true, container: true, status: true, collectedAt: true, receivedAt: true, rejectedReason: true, createdAt: true, updatedAt: true } },
-      createdBy: { select: { id: true, username: true, role: true } },
-    } });
+    const order = await this.prisma.labOrder.findFirst({
+      where: { id, labId: currentUser.labId },
+      select: {
+        id: true,
+        labId: true,
+        patientId: true,
+        orderNumber: true,
+        status: true,
+        revision: true,
+        referredBy: true,
+        clinicalNotes: true,
+        orderedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        patient: {
+          select: { id: true, name: true, dateOfBirth: true, age: true, gender: true, mobile: true, email: true, address: true },
+        },
+        items: {
+          select: {
+            id: true,
+            orderId: true,
+            testId: true,
+            price: true,
+            createdAt: true,
+            test: {
+              select: {
+                id: true,
+                catalogId: true,
+                code: true,
+                shortName: true,
+                name: true,
+                category: true,
+                department: true,
+                sampleType: true,
+                method: true,
+                remarks: true,
+                parameters: {
+                  orderBy: { displayOrder: 'asc' },
+                  select: { id: true, testId: true, name: true, inputType: true, unit: true, normalMin: true, normalMax: true, referenceRange: true, options: true, validation: true, criticalLow: true, criticalHigh: true, decimalPlaces: true, defaultValue: true, formula: true, displayOrder: true, isRequired: true, remarks: true },
+                },
+              },
+            },
+            results: {
+              select: { id: true, orderItemId: true, parameterId: true, sampleId: true, value: true, flag: true, referenceRangeId: true, referenceRangeSnapshot: true, verifiedAt: true, verifiedById: true, createdAt: true, updatedAt: true },
+            },
+          },
+        },
+        samples: {
+          select: { id: true, labId: true, orderId: true, accessionNumber: true, specimenType: true, container: true, status: true, collectedAt: true, receivedAt: true, rejectedReason: true, createdAt: true, updatedAt: true },
+        },
+        createdBy: { select: { id: true, username: true, role: true } },
+      },
+    });
     if (!order) throw new NotFoundException('Order not found');
     return { ...order, results: order.items.flatMap((item) => item.results) };
   }
 
-  async findAll(currentUser: AuthUser, skip = 0, take = 20, search?: string, status?: OrderStatus, patientId?: string, testId?: string, includeTotal = true) {
+  async findAll(currentUser: AuthUser, skip = 0, take = 20, search?: string, status?: OrderStatus, patientId?: string, testId?: string) {
     if (!Number.isInteger(skip) || skip < 0) throw new BadRequestException('skip must be >= 0');
     if (!Number.isInteger(take) || take < 1 || take > 100) throw new BadRequestException('take must be between 1 and 100');
     const where: Prisma.LabOrderWhereInput = {
@@ -208,10 +289,6 @@ export class OrdersService {
       ...(testId ? { items: { some: { testId } } } : {}),
       ...(search ? { OR: [{ orderNumber: { contains: search, mode: 'insensitive' } }, { patient: { name: { contains: search, mode: 'insensitive' } } }, { patient: { mobile: { contains: search, mode: 'insensitive' } } }] } : {}),
     };
-    if (!includeTotal) {
-      const data = await this.prisma.labOrder.findMany({ where, select: { id: true, orderNumber: true, status: true, createdAt: true, patient: { select: { id: true, name: true, mobile: true } }, items: { select: { id: true, testId: true } } }, orderBy: { createdAt: 'desc' }, skip, take });
-      return { data, pagination: { skip, take, page: Math.floor(skip / take) + 1, pages: data.length === take ? undefined : Math.floor(skip / take) + 1 } };
-    }
     const [total, data] = await Promise.all([this.prisma.labOrder.count({ where }), this.prisma.labOrder.findMany({ where, select: { id: true, orderNumber: true, status: true, createdAt: true, patient: { select: { id: true, name: true, mobile: true } }, items: { select: { id: true, testId: true } } }, orderBy: { createdAt: 'desc' }, skip, take })]);
     return { data, pagination: { total, skip, take, page: Math.floor(skip / take) + 1, pages: Math.ceil(total / take) } };
   }

@@ -36,7 +36,6 @@ export class OrdersController {
     @Query('status') status?: string,
     @Query('patientId') patientId?: string,
     @Query('testId') testId?: string,
-    @Query('includeTotal') includeTotal?: string,
   ) {
     const parsedLimit = limit !== undefined ? Number(limit) : take !== undefined ? Number(take) : 20;
     const parsedPage = page === undefined ? 1 : Number(page);
@@ -45,14 +44,14 @@ export class OrdersController {
     if (normalizedStatus && !Object.values(OrderStatus).includes(normalizedStatus as OrderStatus)) {
       throw new BadRequestException(`Invalid order status: ${normalizedStatus}`);
     }
-    const shouldIncludeTotal = includeTotal === undefined || includeTotal === 'true';
-    return this.ordersService.findAll(user, parsedSkip, parsedLimit, search?.trim() || undefined, normalizedStatus as OrderStatus | undefined, patientId?.trim() || undefined, testId?.trim() || undefined, shouldIncludeTotal);
+    return this.ordersService.findAll(user, parsedSkip, parsedLimit, search?.trim() || undefined, normalizedStatus as OrderStatus | undefined, patientId?.trim() || undefined, testId?.trim() || undefined);
   }
 
   @Patch(':id/report')
   updateReport(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: unknown) {
     return this.ordersService.updateReport(user, id, (body ?? {}) as Record<string, unknown>);
   }
+
 
   @Get(':id')
   findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) {
