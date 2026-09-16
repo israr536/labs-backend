@@ -9,6 +9,7 @@
     "build": "prisma generate && nest build",
     "db:migrate": "prisma migrate deploy",
     "prisma:generate": "prisma generate",
+    "prestart": "prisma generate",
     "migrate:dev": "prisma migrate dev",
     "seed:tests": "ts-node --transpile-only prisma/seed-tests.ts",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"prisma/**/*.ts\" \"master-tests/**/*.ts\"",
