@@ -40,7 +40,7 @@ export class SamplesService {
   }
 
   /** Fast path for the single-screen report workflow. When tx is supplied, all sample writes stay inside the caller's transaction. */
-  async createCompletedForOrder(currentUser: AuthUser, orderId: string, body: CreateSamplesBody = {}, tx?: Prisma.TransactionClient) {
+  async createCompletedForOrder(currentUser: AuthUser, orderId: string, body: CreateSamplesBody = {}, tx?: Prisma.TransactionClient, options: { assumeFreshOrder?: boolean } = {}) {
     const explicitSpecimenType = optionalString(body.specimenType, 'specimenType');
     const explicitContainer = optionalString(body.container, 'container');
     const suppliedTypes = Array.isArray(body.specimenTypes) ? body.specimenTypes.map((value) => value.trim()).filter(Boolean) : [];
@@ -58,10 +58,13 @@ export class SamplesService {
     if (types.length === 0) throw new BadRequestException('No specimen type is configured for the order tests');
 
     const run = async (db: Prisma.TransactionClient) => {
-      const existing = await db.sample.findMany({ where: { orderId }, select: { specimenType: true } });
-      const existingTypes = new Set(existing.map((sample) => sample.specimenType));
-      const typesToCreate = types.filter((type) => !existingTypes.has(type));
-      if (typesToCreate.length === 0) throw new BadRequestException('Samples already exist for the requested specimen types');
+      let typesToCreate = types;
+      if (!options.assumeFreshOrder) {
+        const existing = await db.sample.findMany({ where: { orderId }, select: { specimenType: true } });
+        const existingTypes = new Set(existing.map((sample) => sample.specimenType));
+        typesToCreate = types.filter((type) => !existingTypes.has(type));
+        if (typesToCreate.length === 0) throw new BadRequestException('Samples already exist for the requested specimen types');
+      }
       const now = new Date();
       const samples = await this.createSamplesBatch(db, currentUser.labId, orderId, typesToCreate, explicitContainer, now, SampleStatus.COMPLETED);
       await db.labOrder.update({ where: { id: orderId }, data: { status: OrderStatus.SAMPLE_COLLECTED } });
