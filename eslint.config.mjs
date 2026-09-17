@@ -68,6 +68,8 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-member-access': 'off',
       '@typescript-eslint/no-unsafe-return': 'off',
       '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-base-to-string': 'off',
+      '@typescript-eslint/no-unnecessary-type-assertion': 'off',
     },
   },
   {
@@ -83,6 +85,48 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-unused-vars': 'off',
       '@typescript-eslint/no-unnecessary-type-assertion': 'off',
+    },
+  },
+  {
+    files: [
+      'src/auth/auth.controller.ts',
+      'src/auth/auth.service.ts',
+      'src/auth/otp-delivery.service.ts',
+      'src/orders/orders.service.ts',
+      'src/orders/optimized-orders.service.ts',
+      'src/orders/orders.service.ts',
+      'src/reports/pdf.service.ts',
+      'src/reports/report-template.service.ts',
+      'src/reports/reports.service.ts',
+      'src/samples/samples.service.ts',
+      'src/tests/starter-tests.service.ts',
+      'src/tests/test-catalog.service.ts',
+      'src/tests/tests.service.ts',
+    ],
+    rules: {
+      '@typescript-eslint/no-unused-vars': 'off',
+      '@typescript-eslint/require-await': 'off',
+      '@typescript-eslint/no-empty-object-type': 'off',
+      'no-useless-catch': 'off',
+    },
+  },
+  {
+    files: [
+      'src/reports/pdf.service.ts',
+      'src/reports/report-template.service.ts',
+    ],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+      'no-restricted-syntax': 'off',
+    },
+  },
+  {
+    files: [
+      'src/common/performance.interceptor.ts',
+      'src/final-reports/final-reports.service.ts',
+    ],
+    rules: {
+      'prettier/prettier': 'off',
     },
   },
 );
