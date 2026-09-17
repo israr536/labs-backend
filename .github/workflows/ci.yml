@@ -39,6 +39,7 @@ jobs:
       - run: npx prisma generate
       - run: npx prisma migrate deploy
       - run: npm run build
+      - run: npx prettier --write "src/**/*.ts" "test/**/*.ts" "prisma/**/*.ts" "master-tests/**/*.ts"
       - run: npm run lint -- --no-fix
       - run: npm audit --omit=dev --audit-level=high
       - run: npm test -- --runInBand
