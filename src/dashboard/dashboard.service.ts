@@ -17,12 +17,12 @@ export class DashboardService {
           COUNT(*) FILTER (WHERE "status" = ${OrderStatus.FINAL}::"OrderStatus")::bigint AS "completedReports",
           COUNT(*) FILTER (WHERE "status" IN (${OrderStatus.REGISTERED}::"OrderStatus", ${OrderStatus.SAMPLE_COLLECTED}::"OrderStatus", ${OrderStatus.PROCESSING}::"OrderStatus", ${OrderStatus.RESULT_ENTERED}::"OrderStatus", ${OrderStatus.VERIFIED}::"OrderStatus"))::bigint AS "pendingReports"
         FROM "LabOrder"
-        WHERE "labId" = ${labId}::uuid
+        WHERE "labId" = ${labId}
       `),
       this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
         SELECT COUNT(*)::bigint AS count
         FROM "CriticalResult"
-        WHERE "labId" = ${labId}::uuid
+        WHERE "labId" = ${labId}
           AND "isCurrent" = true
           AND "status" IN ('PENDING', 'NOTIFIED')
       `),
