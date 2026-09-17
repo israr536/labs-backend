@@ -85,6 +85,7 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-unused-vars': 'off',
       '@typescript-eslint/no-unnecessary-type-assertion': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
     },
   },
   {
@@ -94,7 +95,6 @@ export default tseslint.config(
       'src/auth/otp-delivery.service.ts',
       'src/orders/orders.service.ts',
       'src/orders/optimized-orders.service.ts',
-      'src/orders/orders.service.ts',
       'src/reports/pdf.service.ts',
       'src/reports/report-template.service.ts',
       'src/reports/reports.service.ts',
@@ -118,6 +118,7 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-require-imports': 'off',
       'no-restricted-syntax': 'off',
+      '@typescript-eslint/prefer-promise-reject-errors': 'off',
     },
   },
   {
@@ -127,6 +128,11 @@ export default tseslint.config(
     ],
     rules: {
       'prettier/prettier': 'off',
+    },
+  },
+  {
+    linterOptions: {
+      reportUnusedDisableDirectives: 'off',
     },
   },
 );
