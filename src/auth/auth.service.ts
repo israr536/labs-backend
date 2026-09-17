@@ -121,67 +121,10 @@ export class AuthService {
       const lab = await tx.lab.create({ data: { code: pending.code, name: pending.name, mobile: pending.mobile, email: pending.email, address: pending.address, subscriptionPlan: 'TRIAL', subscriptionStartAt: trialStart, subscriptionEndAt: trialEnd } });
       const user = await tx.user.create({ data: { labId: lab.id, username: pending.adminEmail ?? pending.adminUsername, mobile: pending.adminMobile, email: pending.adminEmail ?? pending.adminUsername, password: pending.adminPasswordHash, role: UserRole.ADMIN } });
 
-      // Every new trial lab gets the complete active master catalog immediately.
-      // Tests are copied into the lab so the admin can use/configure them during the trial.
-      const definitions = await tx.testDefinition.findMany({
-        where: { isActive: true },
-        include: { parameters: { orderBy: { displayOrder: 'asc' } } },
-        orderBy: { code: 'asc' },
-      });
-
-      if (definitions.length) {
-        await tx.test.createMany({
-          data: definitions.map((definition) => ({
-            labId: lab.id,
-            catalogId: definition.id,
-            code: definition.code,
-            shortName: definition.shortName,
-            name: definition.name,
-            category: definition.category,
-            department: definition.department,
-            sampleType: definition.specimenType,
-            price: null,
-            tat: definition.tat,
-            method: definition.method,
-            isActive: true,
-          })),
-        });
-
-        const tests = await tx.test.findMany({
-          where: { labId: lab.id },
-          select: { id: true, catalogId: true },
-        });
-        const testIdByCatalogId = new Map(tests.map((test) => [test.catalogId, test.id]));
-        const parameters = definitions.flatMap((definition) => {
-          const testId = testIdByCatalogId.get(definition.id);
-          if (!testId) return [];
-          return definition.parameters.map((parameter) => ({
-            testId,
-            name: parameter.name,
-            inputType: parameter.inputType,
-            unit: parameter.unit,
-            normalMin: parameter.normalMin,
-            normalMax: parameter.normalMax,
-            referenceRange: parameter.referenceRange ?? undefined,
-            options: parameter.options ?? undefined,
-            validation: parameter.validation ?? undefined,
-            criticalLow: parameter.criticalLow,
-            criticalHigh: parameter.criticalHigh,
-            decimalPlaces: parameter.decimalPlaces,
-            defaultValue: parameter.defaultValue,
-            formula: parameter.formula,
-            displayOrder: parameter.displayOrder,
-            isRequired: parameter.isRequired,
-            remarks: parameter.remarks,
-          }));
-        });
-        if (parameters.length) await tx.testParameter.createMany({ data: parameters });
-      }
-
       await tx.pendingLabRegistration.delete({ where: { id: pending.id } });
-      return { lab, user, enabledTestCount: definitions.length };
+      return { lab, user };
     });
-    return { success: true, lab: result.lab, user: this.safeUser(result.user), enabledTestCount: result.enabledTestCount, message: `Signup completed. Your ${TRIAL_DAYS}-day trial is active with ${result.enabledTestCount} tests enabled. Please sign in with your new account.` };
+    return { success: true, lab: result.lab, user: this.safeUser(result.user), enabledTestCount: 0, message: `Signup completed. Your ${TRIAL_DAYS}-day trial is active. All active catalog tests are available by default; lab-specific copies are created only when needed.` };
   }
 
   async login(body: LoginBody) {
@@ -245,7 +188,7 @@ export class AuthService {
   }
 
   private getRefreshTokenDays(): number {
-    const refreshTokenDays = Number(process.env.REFRESH_TOKEN_DAYS ?? 30);
+    const refreshTokenDays = Number(process.env.REFRESH_TOKEN_DAYS ?? 365);
     if (!Number.isInteger(refreshTokenDays) || refreshTokenDays < 1 || refreshTokenDays > 365) throw new Error('REFRESH_TOKEN_DAYS must be an integer between 1 and 365');
     return refreshTokenDays;
   }

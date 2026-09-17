@@ -7,8 +7,16 @@ import { PrismaService } from '../prisma/prisma.service';
 export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async record(currentUser: AuthUser, action: AuditAction, entity: string, entityId?: string, metadata?: Prisma.InputJsonValue) {
-    return this.prisma.auditLog.create({
+  async record(
+    currentUser: AuthUser,
+    action: AuditAction,
+    entity: string,
+    entityId?: string,
+    metadata?: Prisma.InputJsonValue,
+    tx?: Prisma.TransactionClient,
+  ) {
+    const db = tx ?? this.prisma;
+    return db.auditLog.create({
       data: { labId: currentUser.labId, actorId: currentUser.id, action, entity, entityId, metadata },
     });
   }

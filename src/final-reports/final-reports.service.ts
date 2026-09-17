@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -17,8 +18,8 @@ export class FinalReportsService {
     private readonly audit: AuditService,
   ) {}
 
-  async finalize(currentUser: AuthUser, orderId: string) {
-    const order = await this.getOrder(currentUser, orderId);
+  async finalize(currentUser: AuthUser, orderId: string, loadedOrder?: any) {
+    const order = loadedOrder ?? (await this.getOrder(currentUser, orderId));
     if (order.status === OrderStatus.FINAL) return this.getReport(currentUser, orderId);
     if (order.status !== OrderStatus.VERIFIED) {
       throw new BadRequestException('Only verified orders can be finalized');
@@ -28,8 +29,12 @@ export class FinalReportsService {
 
     const missing: string[] = [];
     for (const item of order.items) {
+      // const resultsByParameterId = new Map(item.results.map((row) => [row.parameterId, row]));
+      const resultsByParameterId = new Map<string, any>(
+  item.results.map((row: any) => [row.parameterId, row]),
+);
       for (const parameter of item.test.parameters) {
-        const result = item.results.find((row) => row.parameterId === parameter.id);
+        const result = resultsByParameterId.get(parameter.id);
         if (parameter.isRequired && (!result || !result.value.trim())) {
           missing.push(`${item.test.name}: ${parameter.name}`);
         }
@@ -50,25 +55,32 @@ export class FinalReportsService {
       );
     }
 
-    const lab = await this.prisma.lab.findUnique({
-      where: { id: currentUser.labId },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        mobile: true,
-        email: true,
-        address: true,
-        icon: true,
-      },
-    });
-    if (!lab) throw new NotFoundException('Lab not found');
+   const lab = order.lab ?? (await this.prisma.lab.findUnique({
+  where: { id: currentUser.labId },
+  select: {
+    id: true,
+    code: true,
+    name: true,
+    mobile: true,
+    email: true,
+    address: true,
+    icon: true,
+  },
+}));
 
-    const finalizedAt = new Date();
-    const reportNumber = await this.createReportNumber(lab.code);
+if (!lab) throw new NotFoundException('Lab not found');
+
+const finalizedAt = new Date();
+const reportNumber = this.createReportNumber(lab.code);
     const snapshot = this.buildSnapshot(lab, order, finalizedAt);
 
     const report = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.labOrder.updateMany({
+        where: { id: order.id, labId: currentUser.labId, status: OrderStatus.VERIFIED },
+        data: { status: OrderStatus.FINAL },
+      });
+      if (claimed.count !== 1) throw new ConflictException('Order finalization was already completed or changed. Reload the order.');
+
       const created = await tx.finalReport.upsert({
         where: { orderId: order.id },
         create: {
@@ -95,14 +107,6 @@ export class FinalReportsService {
         update: {},
       });
 
-      await tx.labOrder.updateMany({
-        where: {
-          id: order.id,
-          labId: currentUser.labId,
-          status: OrderStatus.VERIFIED,
-        },
-        data: { status: OrderStatus.FINAL },
-      });
       return created;
     });
 
@@ -113,7 +117,15 @@ export class FinalReportsService {
       report.id,
       { orderId, reportNumber, version: 1 },
     );
-    return this.getReport(currentUser, orderId);
+
+    return {
+      ...snapshot,
+      id: report.id,
+      reportNumber: report.reportNumber,
+      version: report.currentVersion,
+      finalizedAt: report.finalizedAt,
+      finalizedBy: { id: currentUser.id, username: (currentUser as any).username, role: currentUser.role },
+    };
   }
 
   async amend(currentUser: AuthUser, orderId: string, reasonValue: unknown) {
@@ -473,17 +485,19 @@ export class FinalReportsService {
     };
   }
 
-  private async createReportNumber(labCode: string): Promise<string> {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
-      const random = Math.random().toString(36).slice(2, 8).toUpperCase();
-      const reportNumber = `${labCode}-R-${timestamp}-${random}`;
-      if (!(await this.prisma.finalReport.findUnique({ where: { reportNumber }, select: { id: true } }))) {
-        return reportNumber;
-      }
-    }
-    throw new BadRequestException('Unable to allocate a unique report number');
-  }
+private createReportNumber(labCode: string): string {
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[-:.TZ]/g, '')
+    .slice(0, 14);
+
+  const random = Math.random()
+    .toString(36)
+    .slice(2, 10)
+    .toUpperCase();
+
+  return `${labCode}-R-${timestamp}-${random}`;
+}
 
   private async getOrder(currentUser: AuthUser, orderId: string) {
     const order = await this.prisma.labOrder.findFirst({
@@ -515,37 +529,42 @@ export class FinalReportsService {
         orderedAt: order.orderedAt,
         patient: order.patient,
         samples: order.samples,
-        tests: order.items.map((item: any) => ({
-          orderItemId: item.id,
-          test: {
-            id: item.test.id,
-            code: item.test.code,
-            name: item.test.name,
-            category: item.test.category,
-            department: item.test.department,
-            sampleType: item.test.sampleType,
-            method: item.test.method,
-            remarks: item.test.remarks,
-          },
-          parameters: item.test.parameters.map((parameter: any) => {
-            const result = item.results.find((row: any) => row.parameterId === parameter.id);
-            const historicalRange = result?.referenceRangeSnapshot ?? null;
-            return {
-              parameterId: parameter.id,
-              name: parameter.name,
-              value: result?.value ?? null,
-              unit: historicalRange?.unit ?? parameter.unit,
-              referenceRange: historicalRange ?? parameter.referenceRange,
-              referenceRangeId: result?.referenceRangeId ?? null,
-              referenceRangeVersion: historicalRange?.version ?? null,
-              normalMin: historicalRange?.low ?? parameter.normalMin,
-              normalMax: historicalRange?.high ?? parameter.normalMax,
-              flag: result?.flag ?? null,
-              displayOrder: parameter.displayOrder,
-              remarks: parameter.remarks,
-            };
-          }),
-        })),
+        tests: order.items.map((item: any) => {
+          const resultByParameterId = new Map<string, any>(
+            item.results.map((row: any) => [row.parameterId, row]),
+          );
+          return {
+            orderItemId: item.id,
+            test: {
+              id: item.test.id,
+              code: item.test.code,
+              name: item.test.name,
+              category: item.test.category,
+              department: item.test.department,
+              sampleType: item.test.sampleType,
+              method: item.test.method,
+              remarks: item.test.remarks,
+            },
+            parameters: item.test.parameters.map((parameter: any) => {
+              const result = resultByParameterId.get(parameter.id);
+              const historicalRange = result?.referenceRangeSnapshot ?? null;
+              return {
+                parameterId: parameter.id,
+                name: parameter.name,
+                value: result?.value ?? null,
+                unit: historicalRange?.unit ?? parameter.unit,
+                referenceRange: historicalRange ?? parameter.referenceRange,
+                referenceRangeId: result?.referenceRangeId ?? null,
+                referenceRangeVersion: historicalRange?.version ?? null,
+                normalMin: historicalRange?.low ?? parameter.normalMin,
+                normalMax: historicalRange?.high ?? parameter.normalMax,
+                flag: result?.flag ?? null,
+                displayOrder: parameter.displayOrder,
+                remarks: parameter.remarks,
+              };
+            }),
+          };
+        }),
       },
       finalizedAt,
     };

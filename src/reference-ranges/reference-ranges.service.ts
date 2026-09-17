@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Gender, Prisma } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { TestsService } from '../tests/tests.service';
 
 interface RangeBody {
   gender?: unknown;
@@ -34,21 +35,21 @@ export interface ResolvedReferenceRange {
 
 @Injectable()
 export class ReferenceRangesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly testsService: TestsService) {}
 
   async list(currentUser: AuthUser, parameterId: string) {
-    await this.assertParameterBelongsToLab(currentUser, parameterId);
+    const resolvedParameterId = await this.testsService.resolveParameterId(currentUser, parameterId);
     return this.prisma.$queryRaw<ResolvedReferenceRange[]>(Prisma.sql`
       SELECT "id", "version", "gender", "ageMinYears"::double precision, "ageMaxYears"::double precision,
              "method", "analyzer", "low", "high", "displayRange", "unit", "effectiveFrom", "effectiveTo"
       FROM "TestParameterReferenceRange"
-      WHERE "parameterId" = ${parameterId}
+      WHERE "parameterId" = ${resolvedParameterId}
       ORDER BY "version" DESC
     `);
   }
 
   async create(currentUser: AuthUser, parameterId: string, body: RangeBody) {
-    await this.assertParameterBelongsToLab(currentUser, parameterId);
+    const resolvedParameterId = await this.testsService.resolveParameterId(currentUser, parameterId, true);
     const gender = this.optionalGender(body.gender);
     const ageMinYears = this.optionalNumber(body.ageMinYears, 'ageMinYears');
     const ageMaxYears = this.optionalNumber(body.ageMaxYears, 'ageMaxYears');
@@ -68,7 +69,7 @@ export class ReferenceRangesService {
       const existing = await tx.$queryRaw<Array<{ version: number; effectiveFrom: Date }>>(Prisma.sql`
         SELECT "version", "effectiveFrom"
         FROM "TestParameterReferenceRange"
-        WHERE "parameterId" = ${parameterId}
+        WHERE "parameterId" = ${resolvedParameterId}
         ORDER BY "version" DESC
         LIMIT 1
       `);
@@ -80,7 +81,7 @@ export class ReferenceRangesService {
       const overlaps = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
         SELECT "id"
         FROM "TestParameterReferenceRange"
-        WHERE "parameterId" = ${parameterId}
+        WHERE "parameterId" = ${resolvedParameterId}
           AND "effectiveFrom" <= ${effectiveFrom}
           AND ("effectiveTo" IS NULL OR "effectiveTo" > ${effectiveFrom})
           AND ("gender" IS NULL OR ${gender}::"Gender" IS NULL OR "gender" = ${gender}::"Gender")
@@ -103,7 +104,7 @@ export class ReferenceRangesService {
         INSERT INTO "TestParameterReferenceRange"
           ("parameterId", "version", "gender", "ageMinYears", "ageMaxYears", "method", "analyzer", "low", "high", "displayRange", "unit", "effectiveFrom")
         VALUES
-          (${parameterId}, ${version}, ${gender}::"Gender", ${ageMinYears}, ${ageMaxYears}, ${method}, ${analyzer}, ${low}, ${high}, ${displayRange}, ${unit}, ${effectiveFrom})
+          (${resolvedParameterId}, ${version}, ${gender}::"Gender", ${ageMinYears}, ${ageMaxYears}, ${method}, ${analyzer}, ${low}, ${high}, ${displayRange}, ${unit}, ${effectiveFrom})
         RETURNING "id", "version", "gender", "ageMinYears"::double precision, "ageMaxYears"::double precision,
                   "method", "analyzer", "low", "high", "displayRange", "unit", "effectiveFrom", "effectiveTo"
       `);
@@ -112,13 +113,13 @@ export class ReferenceRangesService {
   }
 
   async resolve(currentUser: AuthUser, parameterId: string, patient: { dateOfBirth: Date | null; age: number | null; gender: Gender }, method?: string | null, analyzer?: string | null, at = new Date()) {
-    await this.assertParameterBelongsToLab(currentUser, parameterId);
+    const resolvedParameterId = await this.testsService.resolveParameterId(currentUser, parameterId);
     const age = this.calculateAge(patient.dateOfBirth, patient.age);
     const rows = await this.prisma.$queryRaw<ResolvedReferenceRange[]>(Prisma.sql`
       SELECT "id", "version", "gender", "ageMinYears"::double precision, "ageMaxYears"::double precision,
              "method", "analyzer", "low", "high", "displayRange", "unit", "effectiveFrom", "effectiveTo"
       FROM "TestParameterReferenceRange"
-      WHERE "parameterId" = ${parameterId}
+      WHERE "parameterId" = ${resolvedParameterId}
         AND "effectiveFrom" <= ${at}
         AND ("effectiveTo" IS NULL OR "effectiveTo" > ${at})
         AND ("gender" IS NULL OR "gender" = ${patient.gender}::"Gender")

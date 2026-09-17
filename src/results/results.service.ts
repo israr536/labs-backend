@@ -4,7 +4,7 @@ import { AuditService } from '../audit/audit.service';
 import { AuthUser } from '../auth/auth.types';
 import { arrayValue, requiredString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
-import { ReferenceRangesService } from '../reference-ranges/reference-ranges.service';
+import { ResolvedReferenceRange } from '../reference-ranges/reference-ranges.service';
 
 interface ResultInput { parameterId?: unknown; value?: unknown; sampleId?: unknown; analyzer?: unknown; }
 interface ResultsBody { results?: unknown; }
@@ -12,165 +12,170 @@ type ValidationRules = { min?: number; max?: number; minLength?: number; maxLeng
 
 @Injectable()
 export class ResultsService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly referenceRanges: ReferenceRangesService,
-    private readonly audit: AuditService,
-  ) {}
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
 
-  async save(currentUser: AuthUser, orderId: string, body: ResultsBody = {}) {
+  async save(currentUser: AuthUser, orderId: string, body: ResultsBody = {}, options: { reload?: boolean; loadedOrder?: any; tx?: Prisma.TransactionClient; skipAudit?: boolean } = {}) {
     const inputs = arrayValue<ResultInput>(body.results ?? [], 'results');
-    const order = await this.getOrder(currentUser, orderId);
+    const order: any = options.loadedOrder ?? (await (options.tx ?? this.prisma).labOrder.findFirst({ where: { id: orderId, labId: currentUser.labId }, include: { patient: true, samples: true, items: { include: { test: { include: { parameters: { orderBy: { displayOrder: 'asc' } } } }, results: true } } } }));
+    if (!order) throw new NotFoundException('Order not found');
     const lockedStatuses: OrderStatus[] = [OrderStatus.CANCELLED, OrderStatus.FINAL, OrderStatus.VERIFIED];
     if (lockedStatuses.includes(order.status)) throw new BadRequestException('Results cannot be edited after verification or finalization');
     if (!inputs.length) throw new BadRequestException('At least one result is required');
-
-    const items = order.items.flatMap((item) => item.test.parameters.map((parameter) => ({ item, parameter })));
-    const byParameter = new Map(items.map(({ parameter, item }) => [parameter.id, { parameter, item }]));
+    const items: any[] = order.items.flatMap((item: any) => item.test.parameters.map((parameter: any) => ({ item, parameter })));
+    const byParameter = new Map<string, any>(items.map(({ parameter, item }) => [parameter.id, { parameter, item }]));
+    const samplesById = new Map<string, any>((order.samples ?? []).map((sample: any) => [sample.id, sample]));
+    const existingByParameter = new Map<string, any>(order.items.flatMap((item: any) => (item.results ?? []).map((result: any) => [result.parameterId, result] as const)));
     const seen = new Set<string>();
-    const changedParameterIds: string[] = [];
     const createdParameterIds: string[] = [];
-
-    const normalized = await Promise.all(inputs.map(async (input, index) => {
+    const changedParameterIds: string[] = [];
+    const parsed = inputs.map((input, index) => {
       const parameterId = requiredString(input.parameterId, `results.${index}.parameterId`);
-      const target = byParameter.get(parameterId);
+      const target: any = byParameter.get(parameterId);
       if (!target) throw new BadRequestException(`results.${index}.parameterId does not belong to this order`);
       if (seen.has(parameterId)) throw new BadRequestException(`Duplicate result for parameter ${parameterId}`);
       seen.add(parameterId);
-
       const rawValue = input.value === undefined || input.value === null ? '' : String(input.value).trim();
       if (!rawValue && target.parameter.isRequired) throw new BadRequestException(`results.${index}.value is required`);
-
-      const existing = target.item.results.find((row) => row.parameterId === parameterId);
-      if (existing?.verifiedAt) {
-        throw new BadRequestException(`Result for ${target.parameter.name} has already been verified and cannot be changed`);
-      }
-      if (existing) changedParameterIds.push(parameterId);
-      else createdParameterIds.push(parameterId);
-
+      const existing: any = existingByParameter.get(parameterId);
+      if (existing?.verifiedAt) throw new BadRequestException(`Result for ${target.parameter.name} has already been verified and cannot be changed`);
+      if (existing) changedParameterIds.push(parameterId); else createdParameterIds.push(parameterId);
       const value = rawValue ? this.validateValue(target.parameter, rawValue, index) : '';
       const sampleId = input.sampleId === undefined ? undefined : requiredString(input.sampleId, `results.${index}.sampleId`);
       if (sampleId) {
-        const sample = order.samples.find((item) => item.id === sampleId);
+        const sample: any = samplesById.get(sampleId);
         if (!sample) throw new BadRequestException('sampleId does not belong to this order');
         if (sample.status !== 'PROCESSING' && sample.status !== 'COMPLETED') throw new BadRequestException('Results can only be linked to a processing or completed sample');
       }
-
       const analyzer = input.analyzer === undefined ? null : requiredString(input.analyzer, `results.${index}.analyzer`);
-      const range = value ? await this.referenceRanges.resolve(currentUser, parameterId, order.patient, target.item.test.method, analyzer) : null;
-      return {
-        orderItemId: target.item.id,
-        parameterId,
-        sampleId,
-        value,
-        flag: value ? this.calculateFlag(target.parameter, value, range) : undefined,
-        referenceRangeId: range?.id ?? null,
-        referenceRangeSnapshot: range ? {
-          id: range.id,
-          version: range.version,
-          gender: range.gender,
-          ageMinYears: range.ageMinYears,
-          ageMaxYears: range.ageMaxYears,
-          method: range.method,
-          analyzer: range.analyzer,
-          low: range.low,
-          high: range.high,
-          displayRange: range.displayRange,
-          unit: range.unit,
-          effectiveFrom: range.effectiveFrom,
-          effectiveTo: range.effectiveTo,
-        } : null,
-      };
-    }));
-
-    await this.prisma.$transaction(async (tx) => {
-      const locked = await tx.labOrder.updateMany({ where: { id: order.id, labId: currentUser.labId, revision: order.revision, status: { notIn: lockedStatuses } }, data: { revision: { increment: 1 } } });
+      return { orderItemId: target.item.id, parameterId, sampleId, value, analyzer, method: target.item.test.method, parameter: target.parameter };
+    });
+    const ranges = await this.resolveReferenceRanges([...new Set(parsed.filter((item) => item.value).map((item) => item.parameterId))], order.patient, new Map(parsed.map((item) => [item.parameterId, item.method ?? null])), new Map(parsed.map((item) => [item.parameterId, item.analyzer ?? null])), new Date(), options.tx);
+    const normalized = parsed.map((item) => {
+      const range = item.value ? ranges.get(item.parameterId) ?? null : null;
+      return { orderItemId: item.orderItemId, parameterId: item.parameterId, sampleId: item.sampleId, value: item.value, flag: item.value ? this.calculateFlag(item.parameter, item.value, range) : undefined, referenceRangeId: range?.id ?? null, referenceRangeSnapshot: range ? { id: range.id, version: range.version, gender: range.gender, ageMinYears: range.ageMinYears, ageMaxYears: range.ageMaxYears, method: range.method, analyzer: range.analyzer, low: range.low, high: range.high, displayRange: range.displayRange, unit: range.unit, effectiveFrom: range.effectiveFrom, effectiveTo: range.effectiveTo } : null };
+    });
+    const revision = order.revision ?? 0;
+    const write = async (tx: Prisma.TransactionClient) => {
+      const locked = await tx.labOrder.updateMany({ where: { id: order.id, labId: currentUser.labId, revision, status: { notIn: lockedStatuses } }, data: { revision: { increment: 1 }, status: OrderStatus.RESULT_ENTERED } });
       if (locked.count !== 1) throw new ConflictException('This order was updated by another user. Reload the order and try again.');
-      for (const result of normalized) {
-        await tx.orderResult.upsert({
-          where: { orderItemId_parameterId: { orderItemId: result.orderItemId, parameterId: result.parameterId } },
-          create: { orderItemId: result.orderItemId, parameterId: result.parameterId, sampleId: result.sampleId, value: result.value, flag: result.flag },
-          update: { value: result.value, flag: result.flag, sampleId: result.sampleId, verifiedAt: null, verifiedById: null },
-        });
+      if (normalized.length) {
+        const payload = JSON.stringify(normalized.map((result) => ({
+          orderItemId: result.orderItemId,
+          parameterId: result.parameterId,
+          sampleId: result.sampleId ?? null,
+          value: result.value,
+          flag: result.flag ?? null,
+          referenceRangeId: result.referenceRangeId ?? null,
+          referenceRangeSnapshot: result.referenceRangeSnapshot ?? null,
+        })));
         await tx.$executeRaw(Prisma.sql`
-          UPDATE "OrderResult"
-          SET "referenceRangeId" = ${result.referenceRangeId},
-              "referenceRangeSnapshot" = ${result.referenceRangeSnapshot ? JSON.stringify(result.referenceRangeSnapshot) : null}::jsonb
-          WHERE "orderItemId" = ${result.orderItemId} AND "parameterId" = ${result.parameterId}
+          WITH input AS (
+            SELECT *
+            FROM jsonb_to_recordset(${payload}::jsonb) AS rows(
+              "orderItemId" text,
+              "parameterId" text,
+              "sampleId" text,
+              "value" text,
+              "flag" text,
+              "referenceRangeId" text,
+              "referenceRangeSnapshot" jsonb
+            )
+          )
+          INSERT INTO "OrderResult" (
+            "id", "orderItemId", "parameterId", "sampleId", "value", "flag",
+            "referenceRangeId", "referenceRangeSnapshot", "createdAt", "updatedAt"
+          )
+          SELECT gen_random_uuid(), "orderItemId", "parameterId", "sampleId",
+                 "value", "flag"::"ResultFlag", "referenceRangeId",
+                 "referenceRangeSnapshot", CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+          FROM input
+          ON CONFLICT ("orderItemId", "parameterId") DO UPDATE SET
+            "sampleId" = EXCLUDED."sampleId",
+            "value" = EXCLUDED."value",
+            "flag" = EXCLUDED."flag",
+            "verifiedAt" = NULL,
+            "verifiedById" = NULL,
+            "referenceRangeId" = EXCLUDED."referenceRangeId",
+            "referenceRangeSnapshot" = EXCLUDED."referenceRangeSnapshot",
+            "updatedAt" = CURRENT_TIMESTAMP
         `);
       }
-      await tx.labOrder.update({ where: { id: order.id }, data: { status: OrderStatus.RESULT_ENTERED } });
-      await tx.auditLog.create({
-        data: {
-          labId: currentUser.labId,
-          actorId: currentUser.id,
-          action: AuditAction.UPDATE,
-          entity: 'LabOrderResults',
-          entityId: order.id,
-          metadata: {
-            operation: 'SAVE_RESULTS',
-            orderRevision: order.revision + 1,
-            createdCount: createdParameterIds.length,
-            updatedCount: changedParameterIds.length,
-            createdParameterIds,
-            updatedParameterIds: changedParameterIds,
-          },
-        },
-      });
-    });
+    };
+    if (options.tx) await write(options.tx); else await this.prisma.$transaction(write);
+    if (!options.skipAudit) {
+      await this.audit.record(currentUser, AuditAction.UPDATE, 'LabOrderResults', order.id, { operation: 'SAVE_RESULTS', orderRevision: revision + 1, createdCount: createdParameterIds.length, updatedCount: changedParameterIds.length, createdParameterIds, updatedParameterIds: changedParameterIds });
+    }
+    if (options.reload === false) return { normalized };
     return this.findOne(currentUser, orderId);
   }
 
   async findOne(currentUser: AuthUser, orderId: string) {
-    const order = await this.getOrder(currentUser, orderId);
-    const referenceSnapshots = await this.getReferenceSnapshots(order.items.flatMap((item) => item.results.map((result) => result.id)));
-    return { id: order.id, orderNumber: order.orderNumber, status: order.status, revision: order.revision, patient: order.patient, samples: order.samples, items: order.items.map((item) => ({ id: item.id, test: { id: item.test.id, code: item.test.code, name: item.test.name }, results: item.results.map((result) => ({ ...result, referenceRangeSnapshot: referenceSnapshots.get(result.id) ?? null })) })) };
+    const order: any = await this.getOrder(currentUser, orderId);
+    return { id: order.id, orderNumber: order.orderNumber, status: order.status, revision: order.revision, patient: order.patient, samples: order.samples, items: order.items.map((item: any) => ({ id: item.id, test: { id: item.test.id, code: item.test.code, name: item.test.name }, results: item.results.map((result: any) => ({ ...result, referenceRangeSnapshot: result.referenceRangeSnapshot ?? null })) })) };
   }
 
-  async verify(currentUser: AuthUser, orderId: string) {
-    const order = await this.getOrder(currentUser, orderId);
+  async verify(currentUser: AuthUser, orderId: string, options: { reload?: boolean } = {}) { return this.verifyLoaded(currentUser, await this.getOrder(currentUser, orderId), options); }
+  async getOrderForWorkflow(currentUser: AuthUser, orderId: string) { return this.getOrder(currentUser, orderId); }
+
+  async verifyLoaded(currentUser: AuthUser, order: any, options: { reload?: boolean; tx?: Prisma.TransactionClient; skipAudit?: boolean } = {}) {
     if (order.status !== OrderStatus.RESULT_ENTERED) throw new BadRequestException('Only orders with entered results can be verified');
     const missing: string[] = [];
     const resultIds: string[] = [];
-    for (const item of order.items) for (const parameter of item.test.parameters) {
-      const result = item.results.find((row) => row.parameterId === parameter.id);
-      if (parameter.isRequired && (!result || !result.value.trim())) missing.push(`${item.test.name}: ${parameter.name}`);
-      if (result) {
-        if (result.verifiedAt) throw new BadRequestException(`Result for ${parameter.name} has already been verified`);
-        resultIds.push(result.id);
+    const resultKeys: Array<{ orderItemId: string; parameterId: string }> = [];
+    for (const item of order.items as any[]) {
+      const resultsByParameter = new Map<string, any>((item.results ?? []).map((row: any) => [row.parameterId, row]));
+      for (const parameter of item.test.parameters as any[]) {
+        const result: any = resultsByParameter.get(parameter.id);
+        if (parameter.isRequired && (!result || !String(result.value ?? '').trim())) missing.push(`${item.test.name}: ${parameter.name}`);
+        if (result) {
+          if (result.verifiedAt) throw new BadRequestException(`Result for ${parameter.name} has already been verified`);
+          if (result.id) resultIds.push(result.id);
+          resultKeys.push({ orderItemId: item.id, parameterId: parameter.id });
+        }
       }
     }
     if (missing.length) throw new BadRequestException(`Missing required results: ${missing.join(', ')}`);
-    if (!resultIds.length) throw new BadRequestException('No results are available for verification');
-
+    if (!resultKeys.length) throw new BadRequestException('No results are available for verification');
     const verifiedAt = new Date();
-    await this.prisma.$transaction(async (tx) => {
+    const write = async (tx: Prisma.TransactionClient) => {
       const locked = await tx.labOrder.updateMany({ where: { id: order.id, labId: currentUser.labId, revision: order.revision, status: OrderStatus.RESULT_ENTERED }, data: { status: OrderStatus.VERIFIED, revision: { increment: 1 } } });
       if (locked.count !== 1) throw new ConflictException('This order changed while you were verifying it. Reload the order and try again.');
-      const verified = await tx.orderResult.updateMany({ where: { id: { in: resultIds }, verifiedAt: null }, data: { verifiedAt, verifiedById: currentUser.id } });
-      if (verified.count !== resultIds.length) throw new ConflictException('One or more results changed while verification was in progress. Reload the order and try again.');
-      await tx.auditLog.create({
-        data: {
-          labId: currentUser.labId,
-          actorId: currentUser.id,
-          action: AuditAction.VERIFY,
-          entity: 'LabOrderResults',
-          entityId: order.id,
-          metadata: { operation: 'VERIFY_RESULTS', resultCount: resultIds.length, resultIds },
-        },
-      });
-    });
-    return this.findOne(currentUser, orderId);
+      const resultWhere: any = resultIds.length === resultKeys.length ? { id: { in: resultIds }, verifiedAt: null } : { OR: resultKeys.map((key) => ({ orderItemId: key.orderItemId, parameterId: key.parameterId })), verifiedAt: null };
+      const verified = await tx.orderResult.updateMany({ where: resultWhere, data: { verifiedAt, verifiedById: currentUser.id } });
+      if (verified.count !== resultKeys.length) throw new ConflictException('One or more results changed while verification is in progress. Reload the order and try again.');
+    };
+    if (options.tx) await write(options.tx); else await this.prisma.$transaction(write);
+    if (!options.skipAudit) {
+      await this.audit.record(currentUser, AuditAction.VERIFY, 'LabOrderResults', order.id, { operation: 'VERIFY_RESULTS', resultCount: resultKeys.length, resultIds, resultKeys });
+    }
+    if (options.reload === false) return { id: order.id, status: OrderStatus.VERIFIED, revision: order.revision + 1 };
+    return this.findOne(currentUser, order.id);
   }
 
-  private async getReferenceSnapshots(resultIds: string[]) {
-    if (!resultIds.length) return new Map<string, unknown>();
-    const rows = await this.prisma.$queryRaw<Array<{ id: string; referenceRangeSnapshot: unknown }>>(Prisma.sql`
-      SELECT "id", "referenceRangeSnapshot"
-      FROM "OrderResult"
-      WHERE "id" IN (${Prisma.join(resultIds.map((id) => Prisma.sql`${id}`))})
-    `);
-    return new Map(rows.map((row) => [row.id, row.referenceRangeSnapshot]));
+  private async resolveReferenceRanges(parameterIds: string[], patient: { dateOfBirth: Date | null; age: number | null; gender: any }, methodByParameter: Map<string, string | null>, analyzerByParameter: Map<string, string | null>, at = new Date(), tx?: Prisma.TransactionClient) {
+    if (!parameterIds.length) return new Map<string, ResolvedReferenceRange>();
+    const age = this.calculateAge(patient.dateOfBirth, patient.age);
+    const db = tx ?? this.prisma;
+    const rows = await db.testParameterReferenceRange.findMany({
+      where: { parameterId: { in: parameterIds }, effectiveFrom: { lte: at }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: at } }] },
+      select: { id: true, parameterId: true, version: true, gender: true, ageMinYears: true, ageMaxYears: true, method: true, analyzer: true, low: true, high: true, displayRange: true, unit: true, effectiveFrom: true, effectiveTo: true },
+    });
+    const best = new Map<string, ResolvedReferenceRange>();
+    const scores = new Map<string, number[]>();
+    const better = (a: number[], b: number[]) => { for (let i = 0; i < a.length; i += 1) { if (a[i] !== b[i]) return a[i] < b[i]; } return false; };
+    for (const row of rows) {
+      if (row.gender !== null && row.gender !== patient.gender) continue;
+      if (row.ageMinYears !== null && Number(row.ageMinYears) > age) continue;
+      if (row.ageMaxYears !== null && Number(row.ageMaxYears) < age) continue;
+      const method = methodByParameter.get(row.parameterId) ?? null;
+      const analyzer = analyzerByParameter.get(row.parameterId) ?? null;
+      if (row.method !== null && row.method !== method) continue;
+      if (row.analyzer !== null && row.analyzer !== analyzer) continue;
+      const score = [row.gender === patient.gender ? 0 : 1, row.analyzer === analyzer && analyzer !== null ? 0 : row.analyzer === null ? 1 : 99, row.method === method && method !== null ? 0 : row.method === null ? 1 : 99, row.ageMinYears === null && row.ageMaxYears === null ? 10000 : Number(row.ageMaxYears ?? 1000) - Number(row.ageMinYears ?? 0), -(row.version ?? 0), -new Date(row.effectiveFrom).getTime()];
+      const current = scores.get(row.parameterId);
+      if (!current || better(score, current)) { best.set(row.parameterId, row as ResolvedReferenceRange); scores.set(row.parameterId, score); }
+    }
+    return best;
   }
 
   private async getOrder(currentUser: AuthUser, orderId: string) {
@@ -213,5 +218,15 @@ export class ResultsService {
     if (high !== null && numberValue > high) return ResultFlag.HIGH;
     if (low !== null || high !== null) return ResultFlag.NORMAL;
     return undefined;
+  }
+
+  private calculateAge(dateOfBirth: Date | null, storedAge: number | null) {
+    if (!dateOfBirth) return Math.max(0, storedAge ?? 0);
+    const now = new Date();
+    const dob = new Date(dateOfBirth);
+    let age = now.getFullYear() - dob.getFullYear();
+    const month = now.getMonth() - dob.getMonth();
+    if (month < 0 || (month === 0 && now.getDate() < dob.getDate())) age -= 1;
+    return Math.max(0, age);
   }
 }

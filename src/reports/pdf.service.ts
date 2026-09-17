@@ -1,7 +1,6 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 
 // PDFKit avoids the Chromium/Puppeteer runtime dependency for server-side report PDFs.
-// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-assignment
 const PDFDocument = require('pdfkit');
 
 interface ReportData {
@@ -57,7 +56,7 @@ export class PdfService {
         this.renderPdf(doc, data);
         doc.end();
       });
-    } catch (error) {
+    } catch {
       throw new ServiceUnavailableException('PDF generation is temporarily unavailable');
     }
   }
@@ -99,7 +98,6 @@ export class PdfService {
       { label: 'Reference Range', width: 120 },
       { label: 'Flag', width: 63 },
     ];
-    const tableWidth = columns.reduce((sum, column) => sum + column.width, 0);
     let y = doc.y;
     const rowHeight = 24;
 

@@ -36,7 +36,7 @@ export class CriticalResultsService {
       JOIN "Patient" p ON p."id" = cr."patientId"
       JOIN "Test" t ON t."id" = cr."testId"
       JOIN "TestParameter" tp ON tp."id" = cr."parameterId"
-      WHERE cr."labId" = ${labId}::uuid
+      WHERE cr."labId" = ${labId}
         AND cr."isCurrent" = true
         AND cr."status" IN ('PENDING', 'NOTIFIED')
       ORDER BY cr."detectedAt" ASC
@@ -52,7 +52,7 @@ export class CriticalResultsService {
       JOIN "Patient" p ON p."id" = cr."patientId"
       JOIN "Test" t ON t."id" = cr."testId"
       JOIN "TestParameter" tp ON tp."id" = cr."parameterId"
-      WHERE cr."id" = ${id}::uuid AND cr."labId" = ${labId}::uuid
+      WHERE cr."id" = ${id} AND cr."labId" = ${labId}
       LIMIT 1
     `);
     if (!rows.length) throw new NotFoundException('Critical result not found');
@@ -60,7 +60,7 @@ export class CriticalResultsService {
       SELECT "id", "method", "attemptedAt", "contactedName", "contactDetails",
              "successful", "readBackConfirmed", "notes", "attemptedById"
       FROM "CriticalNotificationAttempt"
-      WHERE "criticalResultId" = ${id}::uuid AND "labId" = ${labId}::uuid
+      WHERE "criticalResultId" = ${id} AND "labId" = ${labId}
       ORDER BY "attemptedAt" DESC
     `);
     return { ...rows[0], notificationAttempts: attempts } as CriticalResultRecord;
@@ -77,8 +77,8 @@ export class CriticalResultsService {
       const changed = await tx.$executeRaw(Prisma.sql`
         UPDATE "CriticalResult"
         SET "status" = 'ACKNOWLEDGED', "acknowledgedAt" = CURRENT_TIMESTAMP,
-            "acknowledgedById" = ${userId}::uuid, "acknowledgementNote" = ${noteValue}, "updatedAt" = CURRENT_TIMESTAMP
-        WHERE "id" = ${id}::uuid AND "labId" = ${labId}::uuid
+            "acknowledgedById" = ${userId}, "acknowledgementNote" = ${noteValue}, "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "id" = ${id} AND "labId" = ${labId}
           AND "isCurrent" = true AND "status" = 'NOTIFIED'
       `);
       if (changed !== 1) throw new BadRequestException('Critical result changed while acknowledgement was being recorded');
@@ -110,7 +110,7 @@ export class CriticalResultsService {
     },
   ) {
     const result = await this.getOne(labId, id);
-    if (result.status === 'ACKNOWLEDGED' || result.status === 'SUPERSEDED') {
+    if (!['PENDING', 'NOTIFIED'].includes(result.status)) {
       throw new BadRequestException('This critical result is no longer open');
     }
     if (!METHODS.includes(data.method as NotificationMethod)) {
@@ -130,19 +130,20 @@ export class CriticalResultsService {
           "id", "criticalResultId", "labId", "method", "attemptedAt", "contactedName",
           "contactDetails", "successful", "readBackConfirmed", "notes", "attemptedById"
         ) VALUES (
-          gen_random_uuid(), ${id}::uuid, ${labId}::uuid, ${data.method}::"CriticalNotificationMethod",
+          gen_random_uuid()::text, ${id}, ${labId}, ${data.method}::"CriticalNotificationMethod",
           ${attemptedAt}, ${data.contactedName?.trim() || null}, ${data.contactDetails?.trim() || null},
-          ${data.successful}, ${data.readBackConfirmed ?? false}, ${data.notes?.trim() || null}, ${userId}::uuid
+          ${data.successful}, ${data.readBackConfirmed ?? false}, ${data.notes?.trim() || null}, ${userId}
         )
       `);
       if (data.successful) {
-        await tx.$executeRaw(Prisma.sql`
+        const changed = await tx.$executeRaw(Prisma.sql`
           UPDATE "CriticalResult"
           SET "status" = 'NOTIFIED', "notifiedAt" = ${attemptedAt},
               "notifiedTo" = ${data.contactedName?.trim() || null}, "updatedAt" = CURRENT_TIMESTAMP
-          WHERE "id" = ${id}::uuid AND "labId" = ${labId}::uuid
+          WHERE "id" = ${id} AND "labId" = ${labId}
             AND "isCurrent" = true AND "status" = 'PENDING'
         `);
+        if (changed !== 1) throw new BadRequestException('Critical result was already completed by another request');
       }
       await tx.auditLog.create({
         data: {

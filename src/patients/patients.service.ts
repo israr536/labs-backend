@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Gender } from '@prisma/client';
-import { AuthUser } from '../auth/auth.types';
 import { enumValue, optionalDate, optionalInteger, optionalString, requiredString } from '../common/validation';
+import { AuthUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionService } from '../labs/subscription.service';
 
@@ -30,12 +30,25 @@ export class PatientsService {
     });
   }
 
-  findAll(currentUser: AuthUser, search?: string) {
-    return this.prisma.patient.findMany({ where: { labId: currentUser.labId, ...(search ? { OR: [
-      { name: { contains: search, mode: 'insensitive' as const } },
-      { mobile: { contains: search, mode: 'insensitive' as const } },
-      { email: { contains: search, mode: 'insensitive' as const } },
-    ] } : {}) }, orderBy: { createdAt: 'desc' } });
+  async count(currentUser: AuthUser) {
+    return { count: await this.prisma.patient.count({ where: { labId: currentUser.labId } }) };
+  }
+
+  findAll(currentUser: AuthUser, search?: string, limitValue?: string) {
+    const normalizedSearch = search?.trim() ?? '';
+    if (normalizedSearch.length === 1) return [];
+    const parsedLimit = limitValue === undefined ? 50 : Number(limitValue);
+    const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 100;
+    return this.prisma.patient.findMany({
+      where: { labId: currentUser.labId, ...(normalizedSearch ? { OR: [
+      { name: { contains: normalizedSearch, mode: 'insensitive' as const } },
+      { mobile: { contains: normalizedSearch, mode: 'insensitive' as const } },
+      { email: { contains: normalizedSearch, mode: 'insensitive' as const } },
+    ] } : {}) },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      select: { id: true, name: true, dateOfBirth: true, age: true, gender: true, mobile: true, email: true, address: true, createdAt: true, updatedAt: true },
+    });
   }
 
   async findOne(currentUser: AuthUser, id: string) {
@@ -45,8 +58,7 @@ export class PatientsService {
   }
 
   async update(currentUser: AuthUser, id: string, body: PatientBody) {
-    await this.findOne(currentUser, id);
-    return this.prisma.patient.update({ where: { id }, data: {
+    const data = {
       name: body.name === undefined ? undefined : requiredString(body.name, 'name'),
       dateOfBirth: body.dateOfBirth === undefined ? undefined : optionalDate(body.dateOfBirth, 'dateOfBirth'),
       age: body.age === undefined ? undefined : optionalInteger(body.age, 'age'),
@@ -54,7 +66,14 @@ export class PatientsService {
       mobile: body.mobile === undefined ? undefined : optionalString(body.mobile, 'mobile'),
       email: body.email === undefined ? undefined : optionalString(body.email, 'email'),
       address: body.address === undefined ? undefined : optionalString(body.address, 'address'),
-    } });
+    };
+
+    const rows = await this.prisma.patient.updateManyAndReturn({
+      where: { id, labId: currentUser.labId },
+      data,
+    });
+    if (rows.length !== 1) throw new NotFoundException('Patient not found');
+    return rows[0];
   }
 
   async remove(currentUser: AuthUser, id: string) {

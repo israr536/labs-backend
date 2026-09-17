@@ -25,7 +25,11 @@ export class OtpDeliveryService {
     const response = await fetch(url, { method: 'GET' });
     const detail = await response.text().catch(() => '');
     let payload: { Status?: string; Details?: string } = {};
-    try { payload = JSON.parse(detail) as { Status?: string; Details?: string }; } catch {}
+    try {
+      payload = JSON.parse(detail) as { Status?: string; Details?: string };
+    } catch {
+      // Ignore malformed provider response; the response status below determines delivery success.
+    }
     if (!response.ok || payload.Status !== 'Success') throw new ServiceUnavailableException(`Unable to deliver ${purpose} OTP${payload.Details ? `: ${payload.Details}` : ''}`);
     return { delivered: true, mode: '2factor' as const };
   }

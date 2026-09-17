@@ -36,6 +36,11 @@ export class TestsController {
     return this.testsService.findAll(user, includeInactive);
   }
 
+  @Get('report-entry')
+  reportEntryCatalog(@CurrentUser() user: AuthUser) {
+    return this.testsService.reportEntryCatalog(user);
+  }
+
   @Get(':id')
   findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.testsService.findOne(user, id);

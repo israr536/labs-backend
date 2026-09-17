@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { OrderStatus, UserRole } from '@prisma/client';
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -6,6 +6,7 @@ import type { AuthUser } from '../auth/auth.types';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { OrdersService } from './orders.service';
+import type { CompleteReportBody } from './orders.service';
 
 @UseGuards(AuthGuard, RolesGuard)
 @Controller('orders')
@@ -18,6 +19,12 @@ export class OrdersController {
     return this.ordersService.create(user, body ?? {});
   }
 
+  @Roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN)
+  @Post('complete')
+  createCompleteReport(@CurrentUser() user: AuthUser, @Body() body: unknown, @Headers('idempotency-key') idempotencyKey?: string) {
+    return this.ordersService.createCompleteReport(user, { ...((body ?? {}) as CompleteReportBody), idempotencyKey });
+  }
+
   @Get()
   findAll(
     @CurrentUser() user: AuthUser,
@@ -27,6 +34,9 @@ export class OrdersController {
     @Query('take') take?: string,
     @Query('search') search?: string,
     @Query('status') status?: string,
+    @Query('patientId') patientId?: string,
+    @Query('testId') testId?: string,
+    @Query('includeTotal') includeTotal?: string,
   ) {
     const parsedLimit = limit !== undefined ? Number(limit) : take !== undefined ? Number(take) : 20;
     const parsedPage = page === undefined ? 1 : Number(page);
@@ -35,8 +45,14 @@ export class OrdersController {
     if (normalizedStatus && !Object.values(OrderStatus).includes(normalizedStatus as OrderStatus)) {
       throw new BadRequestException(`Invalid order status: ${normalizedStatus}`);
     }
-    return this.ordersService.findAll(user, parsedSkip, parsedLimit, search?.trim() || undefined, normalizedStatus as OrderStatus | undefined);
+    return this.ordersService.findAll(user, parsedSkip, parsedLimit, search?.trim() || undefined, normalizedStatus as OrderStatus | undefined, patientId?.trim() || undefined, testId?.trim() || undefined, includeTotal === 'true');
   }
+
+  @Patch(':id/report')
+  updateReport(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: unknown) {
+    return this.ordersService.updateReport(user, id, (body ?? {}) as Record<string, unknown>);
+  }
+
 
   @Get(':id')
   findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) {

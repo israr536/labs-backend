@@ -7,11 +7,13 @@ import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { AccessPolicyInterceptor } from './auth/access-policy.interceptor';
 import { CriticalResultsModule } from './critical-results/critical-results.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { FinalReportsModule } from './final-reports/final-reports.module';
 import { LabsModule } from './labs/labs.module';
 import { OrdersModule } from './orders/orders.module';
 import { PatientsModule } from './patients/patients.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { PerformanceInterceptor } from './common/performance.interceptor';
 import { ReferenceRangesModule } from './reference-ranges/reference-ranges.module';
 import { ReportsModule } from './reports/reports.module';
 import { ResultsModule } from './results/results.module';
@@ -36,10 +38,15 @@ import { UsersModule } from './users/users.module';
     ResultsModule,
     FinalReportsModule,
     CriticalResultsModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: PerformanceInterceptor,
+    },
     {
       provide: APP_INTERCEPTOR,
       useClass: AccessPolicyInterceptor,

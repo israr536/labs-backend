@@ -19,26 +19,28 @@ import {
   requiredString,
 } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
+import { TestsService } from '../tests/tests.service';
 import { PdfService } from './pdf.service';
 
 interface ReportBody { patientId?: unknown; testId?: unknown; remarks?: unknown; doctorNotes?: unknown; referredBy?: unknown; sampleCollectedAt?: unknown; results?: unknown; }
 interface UpdateReportBody { remarks?: unknown; doctorNotes?: unknown; referredBy?: unknown; sampleCollectedAt?: unknown; results?: unknown; }
 interface ReportResultBody { parameterId?: unknown; value?: unknown; }
-interface FindAllOptions { status?: string; search?: string; patientId?: string; testId?: string; skip?: string; take?: string; }
+interface FindAllOptions { status?: string; search?: string; patientId?: string; testId?: string; skip?: string; take?: string; includeTotal?: string; }
 type ValidationRule = { min?: number; max?: number; minLength?: number; maxLength?: number; pattern?: string };
 
 @Injectable()
 export class ReportsService {
-  constructor(private readonly prisma: PrismaService, private readonly pdfService: PdfService) {}
+  constructor(private readonly prisma: PrismaService, private readonly pdfService: PdfService, private readonly testsService: TestsService) {}
 
   async create(currentUser: AuthUser, body: ReportBody) {
     const patientId = requiredString(body.patientId, 'patientId');
     const testId = requiredString(body.testId, 'testId');
-    const [lab, patient, test] = await Promise.all([
+    const [lab, patient, resolvedTests] = await Promise.all([
       this.prisma.lab.findUnique({ where: { id: currentUser.labId } }),
       this.prisma.patient.findFirst({ where: { id: patientId, labId: currentUser.labId } }),
-      this.prisma.test.findFirst({ where: { id: testId, labId: currentUser.labId, isActive: true }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } }),
+      this.testsService.resolveForUse(currentUser, [testId]),
     ]);
+    const test = resolvedTests[0];
     if (!lab) throw new NotFoundException('Lab not found');
     if (!patient) throw new NotFoundException('Patient not found');
     if (!test) throw new NotFoundException('Test not found');
@@ -80,13 +82,37 @@ export class ReportsService {
       { patient: { mobile: { contains: search, mode: 'insensitive' as const } } },
       { remarks: { contains: search, mode: 'insensitive' as const } },
     ];
-    return this.prisma.$transaction(async (tx) => {
-      const [total, reports] = await Promise.all([
-        tx.report.count({ where }),
-        tx.report.findMany({ where, include: this.reportInclude(), orderBy: { createdAt: 'desc' }, skip, take }),
-      ]);
-      return { data: reports, pagination: { total, skip, take, pages: Math.ceil(total / take) } };
-    });
+
+    // Listing must not hydrate the full report graph. Full test parameters/results
+    // are loaded only by findOne/generate when a report is actually opened.
+    const reports = await this.prisma.report.findMany({
+        where,
+        select: {
+          id: true,
+          labId: true,
+          patientId: true,
+          testId: true,
+          reportNumber: true,
+          status: true,
+          remarks: true,
+          doctorNotes: true,
+          referredBy: true,
+          approvedBy: true,
+          sampleCollectedAt: true,
+          reportedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          patient: { select: { id: true, name: true, age: true, gender: true, mobile: true } },
+          test: { select: { id: true, code: true, name: true, category: true, department: true, sampleType: true } },
+          createdBy: { select: { id: true, username: true, role: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+      });
+    if (options.includeTotal !== 'true') return { data: reports, pagination: { skip, take, hasMore: reports.length === take } };
+    const total = await this.prisma.report.count({ where });
+    return { data: reports, pagination: { total, skip, take, pages: Math.ceil(total / take), hasMore: skip + reports.length < total } };
   }
 
   async findOne(currentUser: AuthUser, id: string) {
@@ -177,7 +203,6 @@ export class ReportsService {
       const parameter = parameterById.get(parameterId);
       if (!parameter) throw new BadRequestException(`results.${index}.parameterId does not belong to this test`);
       const value = normalizeResultValue(result.value, `results.${index}.value`);
-      // Draft reports may omit required results; finalization enforces required fields.
       if (value === '') return;
       this.validateParameterValue(parameter, value, `results.${index}.value`);
       output.push({ parameterId, value, flag: this.calculateFlag(parameter, value) });

@@ -8,6 +8,14 @@ import { PrismaService } from '../src/prisma/prisma.service';
 
 jest.setTimeout(180_000);
 
+type ReportBody = {
+  order: {
+    id: string;
+    tests: Array<{ parameters: unknown[] }>;
+  };
+  reportNumber: string;
+};
+
 describe('Authentication and reporting flow (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
@@ -79,8 +87,8 @@ describe('Authentication and reporting flow (e2e)', () => {
       { name: 'Result', inputType: 'NUMBER' as const, unit: 'mg/dL', normalMin: 1, normalMax: 100, displayOrder: 0, isRequired: true },
       { name: 'Comment', inputType: 'TEXT' as const, unit: null, normalMin: null, normalMax: null, displayOrder: 1, isRequired: true },
     ];
-    const firstTest = await prisma.test.create({ data: { labId, code: `E2E-A-${unique.slice(0, 8)}`, name: 'E2E Chemistry Test', category: 'E2E', department: 'CHEMISTRY', sampleType: 'SERUM', isActive: true, parameters: { create: parameterData } } });
-    const secondTest = await prisma.test.create({ data: { labId, code: `E2E-B-${unique.slice(0, 8)}`, name: 'E2E Hematology Test', category: 'E2E', department: 'HEMATOLOGY', sampleType: 'BLOOD', isActive: true, parameters: { create: parameterData } } });
+    const firstTest = await prisma.test.create({ data: { labId, scopeId: labId, code: `E2E-A-${unique.slice(0, 8)}`, name: 'E2E Chemistry Test', category: 'E2E', department: 'CHEMISTRY', sampleType: 'SERUM', isActive: true, parameters: { create: parameterData } } });
+    const secondTest = await prisma.test.create({ data: { labId, scopeId: labId, code: `E2E-B-${unique.slice(0, 8)}`, name: 'E2E Hematology Test', category: 'E2E', department: 'HEMATOLOGY', sampleType: 'BLOOD', isActive: true, parameters: { create: parameterData } } });
     testIds = [firstTest.id, secondTest.id];
   });
 
@@ -126,10 +134,11 @@ describe('Authentication and reporting flow (e2e)', () => {
     await request(app.getHttpServer()).post(`/orders/${orderId}/verify`).set(technicianAuth).expect(201);
     await request(app.getHttpServer()).post(`/orders/${orderId}/finalize`).set(technicianAuth).expect(201);
     const report = await request(app.getHttpServer()).get(`/orders/${orderId}/report`).set(technicianAuth).expect(200);
-    expect(report.body.order.id).toBe(orderId);
-    expect(report.body.order.tests).toHaveLength(2);
-    expect(report.body.order.tests.every((item: { parameters: unknown[] }) => item.parameters.length === 2)).toBe(true);
-    expect(report.body.reportNumber).toBeTruthy();
+    const reportBody = report.body as ReportBody;
+    expect(reportBody.order.id).toBe(orderId);
+    expect(reportBody.order.tests).toHaveLength(2);
+    expect(reportBody.order.tests.every((item) => item.parameters.length === 2)).toBe(true);
+    expect(reportBody.reportNumber).toBeTruthy();
 
     const pdf = await request(app.getHttpServer()).get(`/orders/${orderId}/report/pdf`).set(technicianAuth).buffer(true).parse((response, callback) => {
       const chunks: Buffer[] = [];

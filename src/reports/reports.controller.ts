@@ -29,8 +29,8 @@ export class ReportsController {
   create(@CurrentUser() user: AuthUser, @Body() body: unknown) { return this.reportsService.create(user, body ?? {}); }
 
   @Get()
-  findAll(@CurrentUser() user: AuthUser, @Query('status') status?: string, @Query('search') search?: string, @Query('patientId') patientId?: string, @Query('testId') testId?: string, @Query('skip') skip?: string, @Query('take') take?: string) {
-    return this.reportsService.findAll(user, { status, search, patientId, testId, skip, take });
+  findAll(@CurrentUser() user: AuthUser, @Query('status') status?: string, @Query('search') search?: string, @Query('patientId') patientId?: string, @Query('testId') testId?: string, @Query('skip') skip?: string, @Query('take') take?: string, @Query('includeTotal') includeTotal?: string) {
+    return this.reportsService.findAll(user, { status, search, patientId, testId, skip, take, includeTotal });
   }
 
   @Get('templates')

@@ -28,9 +28,14 @@ export class PatientsController {
     return this.patientsService.create(user, body ?? {});
   }
 
+  @Get('count')
+  count(@CurrentUser() user: AuthUser) {
+    return this.patientsService.count(user);
+  }
+
   @Get()
-  findAll(@CurrentUser() user: AuthUser, @Query('search') search?: string) {
-    return this.patientsService.findAll(user, search);
+  findAll(@CurrentUser() user: AuthUser, @Query('search') search?: string, @Query('limit') limit?: string) {
+    return this.patientsService.findAll(user, search, limit);
   }
 
   @Get(':id')

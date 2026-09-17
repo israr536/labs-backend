@@ -10,5 +10,6 @@ import { FinalReportsService } from './final-reports.service';
   imports: [AuthModule, AuditModule, PrismaModule],
   controllers: [FinalReportsController],
   providers: [FinalReportsService, FinalReportWorkflowService],
+  exports: [FinalReportsService],
 })
 export class FinalReportsModule {}
