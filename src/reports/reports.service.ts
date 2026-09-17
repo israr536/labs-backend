@@ -25,7 +25,7 @@ import { PdfService } from './pdf.service';
 interface ReportBody { patientId?: unknown; testId?: unknown; remarks?: unknown; doctorNotes?: unknown; referredBy?: unknown; sampleCollectedAt?: unknown; results?: unknown; }
 interface UpdateReportBody { remarks?: unknown; doctorNotes?: unknown; referredBy?: unknown; sampleCollectedAt?: unknown; results?: unknown; }
 interface ReportResultBody { parameterId?: unknown; value?: unknown; }
-interface FindAllOptions { status?: string; search?: string; patientId?: string; testId?: string; skip?: string; take?: string; }
+interface FindAllOptions { status?: string; search?: string; patientId?: string; testId?: string; skip?: string; take?: string; includeTotal?: string; }
 type ValidationRule = { min?: number; max?: number; minLength?: number; maxLength?: number; pattern?: string };
 
 @Injectable()
@@ -85,9 +85,7 @@ export class ReportsService {
 
     // Listing must not hydrate the full report graph. Full test parameters/results
     // are loaded only by findOne/generate when a report is actually opened.
-    const [total, reports] = await Promise.all([
-      this.prisma.report.count({ where }),
-      this.prisma.report.findMany({
+    const reports = await this.prisma.report.findMany({
         where,
         select: {
           id: true,
@@ -111,9 +109,10 @@ export class ReportsService {
         orderBy: { createdAt: 'desc' },
         skip,
         take,
-      }),
-    ]);
-    return { data: reports, pagination: { total, skip, take, pages: Math.ceil(total / take) } };
+      });
+    if (options.includeTotal !== 'true') return { data: reports, pagination: { skip, take, hasMore: reports.length === take } };
+    const total = await this.prisma.report.count({ where });
+    return { data: reports, pagination: { total, skip, take, pages: Math.ceil(total / take), hasMore: skip + reports.length < total } };
   }
 
   async findOne(currentUser: AuthUser, id: string) {

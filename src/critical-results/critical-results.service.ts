@@ -110,7 +110,7 @@ export class CriticalResultsService {
     },
   ) {
     const result = await this.getOne(labId, id);
-    if (result.status === 'ACKNOWLEDGED' || result.status === 'SUPERSEDED') {
+    if (!['PENDING', 'NOTIFIED'].includes(result.status)) {
       throw new BadRequestException('This critical result is no longer open');
     }
     if (!METHODS.includes(data.method as NotificationMethod)) {
@@ -136,13 +136,14 @@ export class CriticalResultsService {
         )
       `);
       if (data.successful) {
-        await tx.$executeRaw(Prisma.sql`
+        const changed = await tx.$executeRaw(Prisma.sql`
           UPDATE "CriticalResult"
           SET "status" = 'NOTIFIED', "notifiedAt" = ${attemptedAt},
               "notifiedTo" = ${data.contactedName?.trim() || null}, "updatedAt" = CURRENT_TIMESTAMP
           WHERE "id" = ${id}::uuid AND "labId" = ${labId}::uuid
             AND "isCurrent" = true AND "status" = 'PENDING'
         `);
+        if (changed !== 1) throw new BadRequestException('Critical result was already completed by another request');
       }
       await tx.auditLog.create({
         data: {

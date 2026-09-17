@@ -46,6 +46,7 @@ export class TestsController {
     return this.testsService.findOne(user, id);
   }
 
+  @Roles(UserRole.ADMIN)
   @Patch(':id')
   update(
     @CurrentUser() user: AuthUser,
@@ -55,11 +56,13 @@ export class TestsController {
     return this.testsService.update(user, id, body ?? {});
   }
 
+  @Roles(UserRole.ADMIN)
   @Delete(':id')
   remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.testsService.remove(user, id);
   }
 
+  @Roles(UserRole.ADMIN)
   @Post(':id/parameters')
   addParameter(
     @CurrentUser() user: AuthUser,
@@ -69,6 +72,7 @@ export class TestsController {
     return this.testsService.addParameter(user, id, body ?? {});
   }
 
+  @Roles(UserRole.ADMIN)
   @Patch(':id/parameters/:parameterId')
   updateParameter(
     @CurrentUser() user: AuthUser,
@@ -79,6 +83,7 @@ export class TestsController {
     return this.testsService.updateParameter(user, id, parameterId, body ?? {});
   }
 
+  @Roles(UserRole.ADMIN)
   @Delete(':id/parameters/:parameterId')
   removeParameter(
     @CurrentUser() user: AuthUser,

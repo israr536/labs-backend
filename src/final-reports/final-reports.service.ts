@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -74,6 +75,12 @@ const reportNumber = this.createReportNumber(lab.code);
     const snapshot = this.buildSnapshot(lab, order, finalizedAt);
 
     const report = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.labOrder.updateMany({
+        where: { id: order.id, labId: currentUser.labId, status: OrderStatus.VERIFIED },
+        data: { status: OrderStatus.FINAL },
+      });
+      if (claimed.count !== 1) throw new ConflictException('Order finalization was already completed or changed. Reload the order.');
+
       const created = await tx.finalReport.upsert({
         where: { orderId: order.id },
         create: {
@@ -100,14 +107,6 @@ const reportNumber = this.createReportNumber(lab.code);
         update: {},
       });
 
-      await tx.labOrder.updateMany({
-        where: {
-          id: order.id,
-          labId: currentUser.labId,
-          status: OrderStatus.VERIFIED,
-        },
-        data: { status: OrderStatus.FINAL },
-      });
       return created;
     });
 

@@ -19,8 +19,8 @@ export class TestCatalogController {
   ) {}
 
   @Get()
-  findAll(@CurrentUser() user: AuthUser, @Query('search') search?: string, @Query('category') category?: string, @Query('department') department?: string) {
-    return this.service.findAll(user, { search, category, department });
+  findAll(@CurrentUser() user: AuthUser, @Query('search') search?: string, @Query('category') category?: string, @Query('department') department?: string, @Query('skip') skip?: string, @Query('take') take?: string) {
+    return this.service.findAll(user, { search, category, department, skip, take });
   }
 
   @Get('categories')

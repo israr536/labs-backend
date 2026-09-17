@@ -13,9 +13,9 @@ export class DashboardService {
       this.prisma.patient.count({ where: { labId } }),
       this.prisma.$queryRaw<Array<{ totalReports: bigint; completedReports: bigint; pendingReports: bigint }>>(Prisma.sql`
         SELECT
-          COUNT(*)::bigint AS "totalReports",
+          COUNT(*) FILTER (WHERE "status" <> ${OrderStatus.CANCELLED}::"OrderStatus")::bigint AS "totalReports",
           COUNT(*) FILTER (WHERE "status" = ${OrderStatus.FINAL}::"OrderStatus")::bigint AS "completedReports",
-          COUNT(*) FILTER (WHERE "status" NOT IN (${OrderStatus.FINAL}::"OrderStatus", ${OrderStatus.CANCELLED}::"OrderStatus"))::bigint AS "pendingReports"
+          COUNT(*) FILTER (WHERE "status" IN (${OrderStatus.REGISTERED}::"OrderStatus", ${OrderStatus.SAMPLE_COLLECTED}::"OrderStatus", ${OrderStatus.PROCESSING}::"OrderStatus", ${OrderStatus.RESULT_ENTERED}::"OrderStatus", ${OrderStatus.VERIFIED}::"OrderStatus"))::bigint AS "pendingReports"
         FROM "LabOrder"
         WHERE "labId" = ${labId}::uuid
       `),

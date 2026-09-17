@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { ParameterInputType, Prisma } from '@prisma/client';
+import { ParameterInputType, Prisma, UserRole } from '@prisma/client';
 import { AuthUser } from '../auth/auth.types';
 import { arrayValue, enumValue, optionalBoolean, optionalInteger, optionalNumber, optionalString, requiredString } from '../common/validation';
 import { PrismaService } from '../prisma/prisma.service';
@@ -14,6 +14,7 @@ export class TestsService {
   constructor(private readonly prisma: PrismaService, private readonly subscriptionService: SubscriptionService) {}
 
   async create(currentUser: AuthUser, body: TestBody) {
+    this.assertAdministrator(currentUser);
     const isActive = optionalBoolean(body.isActive, 'isActive') ?? true;
     const parameters = this.parseParameters(body.parameters, false);
     const data = {
@@ -92,6 +93,7 @@ export class TestsService {
   }
 
   async cloneFromCatalog(currentUser: AuthUser, catalogId: string, overrides: TestBody = {}) {
+    this.assertAdministrator(currentUser);
     const definition = await this.prisma.testDefinition.findFirst({ where: { id: catalogId, isActive: true }, include: { parameters: { orderBy: { displayOrder: 'asc' } } } });
     if (!definition) throw new NotFoundException('Test catalog definition not found');
     const code = requiredString(overrides.code ?? definition.code, 'code');
@@ -243,6 +245,7 @@ export class TestsService {
   }
 
   async update(currentUser: AuthUser, id: string, body: TestBody) {
+    this.assertAdministrator(currentUser);
     const test = await this.prepareForEdit(currentUser, id);
     const parameters = body.parameters === undefined ? undefined : this.parseParameters(body.parameters, true);
     if (parameters) {
@@ -254,11 +257,13 @@ export class TestsService {
   }
 
   async addParameter(currentUser: AuthUser, testId: string, body: ParameterBody) {
+    this.assertAdministrator(currentUser);
     const test = await this.prepareForEdit(currentUser, testId);
     return this.prisma.testParameter.create({ data: { testId: test.id, ...this.parseParameter(body, 0) } });
   }
 
   async updateParameter(currentUser: AuthUser, testId: string, parameterId: string, body: ParameterBody) {
+    this.assertAdministrator(currentUser);
     const test = await this.prepareForEdit(currentUser, testId);
     const resolvedParameterId = await this.resolveParameterId(currentUser, parameterId, true);
     const parameter = await this.prisma.testParameter.findFirst({ where: { id: resolvedParameterId, testId: test.id } });
@@ -269,6 +274,7 @@ export class TestsService {
   }
 
   async removeParameter(currentUser: AuthUser, testId: string, parameterId: string) {
+    this.assertAdministrator(currentUser);
     const test = await this.prepareForEdit(currentUser, testId);
     const resolvedParameterId = await this.resolveParameterId(currentUser, parameterId, true);
     const parameter = await this.prisma.testParameter.findFirst({ where: { id: resolvedParameterId, testId: test.id } });
@@ -280,9 +286,14 @@ export class TestsService {
   }
 
   async remove(currentUser: AuthUser, id: string) {
+    this.assertAdministrator(currentUser);
     const test = await this.prepareForEdit(currentUser, id);
     await this.prisma.test.update({ where: { id: test.id }, data: { isActive: false } });
     return { success: true };
+  }
+
+  private assertAdministrator(currentUser: AuthUser) {
+    if (currentUser.role !== UserRole.ADMIN) throw new BadRequestException('Only administrators can change test configuration');
   }
 
   private async prepareForEdit(currentUser: AuthUser, id: string) {

@@ -179,6 +179,7 @@ model TestDefinition {
   @@index([department])
   @@index([name])
   @@index([isActive])
+  @@index([isActive, department, category, name])
 }
 
 model TestDefinitionParameter {

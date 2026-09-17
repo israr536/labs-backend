@@ -17,9 +17,18 @@ type PrismaLike = PrismaService | PrismaTransaction;
 
 @Injectable()
 export class SubscriptionService {
+  private readonly statusCache = new Map<string, { expiresAt: number; value: Awaited<ReturnType<SubscriptionService['loadStatus']>> }>();
   constructor(private readonly prisma: PrismaService) {}
 
   async getStatus(labId: string) {
+    const cached = this.statusCache.get(labId);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const value = await this.loadStatus(labId);
+    this.statusCache.set(labId, { value, expiresAt: Date.now() + 15_000 });
+    return value;
+  }
+
+  private async loadStatus(labId: string) {
     const lab = await this.prisma.lab.findUnique({ where: { id: labId }, select: { id: true, subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true } });
     if (!lab) throw new NotFoundException('Lab not found');
     const plan = this.normalizePlan(lab.subscriptionPlan);
