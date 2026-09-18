@@ -232,7 +232,53 @@ const reportNumber = this.createReportNumber(lab.code);
   }
 
   async generatePdf(currentUser: AuthUser, orderId: string): Promise<Buffer> {
-    const data = await this.getReport(currentUser, orderId);
+    // Printing is intentionally independent from workflow status.
+    // FINAL orders use the immutable FinalReport snapshot when available.
+    // RESULT_ENTERED / VERIFIED / REGISTERED / other orders are rendered from
+    // the current live order so the lab owner can print at any stage.
+    let data: any;
+    const finalReport = await this.prisma.finalReport.findFirst({
+      where: { orderId, labId: currentUser.labId },
+      include: {
+        finalizedBy: { select: { id: true, username: true, role: true } },
+      },
+    });
+
+    if (finalReport) {
+      const snapshot = finalReport.snapshot as any;
+      data = {
+        id: finalReport.id,
+        reportNumber: finalReport.reportNumber,
+        version: finalReport.currentVersion,
+        finalizedAt: finalReport.finalizedAt,
+        finalizedBy: finalReport.finalizedBy,
+        ...snapshot,
+      };
+    } else {
+      const order = await this.getOrder(currentUser, orderId);
+      const lab = await this.prisma.lab.findUnique({
+        where: { id: currentUser.labId },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          mobile: true,
+          email: true,
+          address: true,
+          icon: true,
+        },
+      });
+      if (!lab) throw new NotFoundException('Lab not found');
+
+      data = {
+        ...this.buildSnapshot(lab, order, order.updatedAt ?? order.createdAt, order.status),
+        id: order.id,
+        reportNumber: order.orderNumber,
+        version: null,
+        finalizedAt: null,
+        finalizedBy: null,
+      };
+    }
 
     try {
       const LEFT = 12;
@@ -517,13 +563,13 @@ private createReportNumber(labCode: string): string {
     return order;
   }
 
-  private buildSnapshot(lab: any, order: any, finalizedAt: Date) {
+  private buildSnapshot(lab: any, order: any, finalizedAt: Date | null, status: OrderStatus = OrderStatus.FINAL) {
     return {
       lab,
       order: {
         id: order.id,
         orderNumber: order.orderNumber,
-        status: OrderStatus.FINAL,
+        status,
         referredBy: order.referredBy,
         clinicalNotes: order.clinicalNotes,
         orderedAt: order.orderedAt,
