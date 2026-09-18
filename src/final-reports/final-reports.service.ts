@@ -232,31 +232,36 @@ const reportNumber = this.createReportNumber(lab.code);
   }
 
   async generatePdf(currentUser: AuthUser, orderId: string): Promise<Buffer> {
-    // Printing is intentionally independent from workflow status.
-    // FINAL orders use the immutable FinalReport snapshot when available.
-    // RESULT_ENTERED / VERIFIED / REGISTERED / other orders are rendered from
-    // the current live order so the lab owner can print at any stage.
+    // Printing is independent from workflow status. Read the live order first.
+    // Only FINAL orders need the immutable FinalReport lookup.
+    const startedAt = Date.now();
+    const order = await this.getOrder(currentUser, orderId);
+    const orderLoadedAt = Date.now();
     let data: any;
-    const finalReport = await this.prisma.finalReport.findFirst({
-      where: { orderId, labId: currentUser.labId },
-      include: {
-        finalizedBy: { select: { id: true, username: true, role: true } },
-      },
-    });
 
-    if (finalReport) {
-      const snapshot = finalReport.snapshot as any;
-      data = {
-        id: finalReport.id,
-        reportNumber: finalReport.reportNumber,
-        version: finalReport.currentVersion,
-        finalizedAt: finalReport.finalizedAt,
-        finalizedBy: finalReport.finalizedBy,
-        ...snapshot,
-      };
-    } else {
-      const order = await this.getOrder(currentUser, orderId);
-      const lab = await this.prisma.lab.findUnique({
+    if (order.status === OrderStatus.FINAL) {
+      const finalReport = await this.prisma.finalReport.findFirst({
+        where: { orderId, labId: currentUser.labId },
+        include: {
+          finalizedBy: { select: { id: true, username: true, role: true } },
+        },
+      });
+
+      if (finalReport) {
+        const snapshot = finalReport.snapshot as any;
+        data = {
+          id: finalReport.id,
+          reportNumber: finalReport.reportNumber,
+          version: finalReport.currentVersion,
+          finalizedAt: finalReport.finalizedAt,
+          finalizedBy: finalReport.finalizedBy,
+          ...snapshot,
+        };
+      }
+    }
+
+    if (!data) {
+      const lab = order.lab ?? await this.prisma.lab.findUnique({
         where: { id: currentUser.labId },
         select: {
           id: true,
@@ -271,7 +276,12 @@ const reportNumber = this.createReportNumber(lab.code);
       if (!lab) throw new NotFoundException('Lab not found');
 
       data = {
-        ...this.buildSnapshot(lab, order, null, order.status),
+        ...this.buildSnapshot(
+          lab,
+          order,
+          order.status === OrderStatus.FINAL ? new Date(order.updatedAt) : null,
+          order.status,
+        ),
         id: order.id,
         reportNumber: order.orderNumber,
         version: null,
@@ -279,6 +289,8 @@ const reportNumber = this.createReportNumber(lab.code);
         finalizedBy: null,
       };
     }
+
+    console.info('[PDF] order=' + orderId + ' status=' + order.status + ' loadMs=' + (orderLoadedAt - startedAt));
 
     try {
       const LEFT = 12;
@@ -316,7 +328,7 @@ const reportNumber = this.createReportNumber(lab.code);
           const suffix = hour >= 12 ? 'PM' : 'AM';
           hour %= 12;
           if (hour === 0) hour = 12;
-          return `${dd}/${mm}/${yyyy} ${String(hour).padStart(2, '0')}:${String(parsed.getMinutes()).padStart(2, '0')} ${suffix}`;
+          return dd + '/' + mm + '/' + yyyy + ' ' + String(hour).padStart(2, '0') + ':' + String(parsed.getMinutes()).padStart(2, '0') + ' ' + suffix;
         };
 
         const formatGender = (value: unknown) => {
@@ -330,7 +342,7 @@ const reportNumber = this.createReportNumber(lab.code);
             '11011001100', '11001101100', '11001100110', '10010011000', '10010001100',
             '10001001100', '10011001000', '10011000100', '10001100100', '11001001000',
           ];
-          const pattern = `11010010000${digits.slice(0, 12).split('').map((d) => digitPatterns[Number(d)]).join('')}1100011101011`;
+          const pattern = '11010010000' + digits.slice(0, 12).split('').map((d) => digitPatterns[Number(d)]).join('') + '1100011101011';
           const unit = width / pattern.length;
           for (let i = 0; i < pattern.length; i += 1) {
             if (pattern[i] === '1') doc.rect(x + i * unit, y, Math.max(unit, 0.55), height).fill();
@@ -342,8 +354,8 @@ const reportNumber = this.createReportNumber(lab.code);
           doc.text(text(lab.name || 'LABORATORY').toUpperCase(), 388, 7, { width: 190, lineGap: 0 });
           doc.font('Helvetica').fontSize(6.7);
           doc.text(text(lab.address || ''), 388, 18, { width: 190, lineGap: 0 });
-          doc.text(`Mob: ${text(lab.mobile || '')}`, 388, 28, { width: 190, lineGap: 0 });
-          doc.text(`E-mail: ${text(lab.email || '')}`, 388, 38, { width: 190, lineGap: 0 });
+          doc.text('Mob: ' + text(lab.mobile || ''), 388, 28, { width: 190, lineGap: 0 });
+          doc.text('E-mail: ' + text(lab.email || ''), 388, 38, { width: 190, lineGap: 0 });
 
           const boxTop = 105;
           const boxBottom = 210;
@@ -358,23 +370,17 @@ const reportNumber = this.createReportNumber(lab.code);
           };
 
           row('Patient Name', text(patient.name), 21, 119, 225);
-          row('Age/Gender', `${text(patient.age ?? 'N/A')} Year /${formatGender(patient.gender)}`, 21, 135, 225);
+          row('Age/Gender', text(patient.age ?? 'N/A') + ' Year /' + formatGender(patient.gender), 21, 135, 225);
           row('Ref Doctor', text(data.order?.referredBy || 'DR.SELF'), 21, 151, 225);
           row('Lab ID', text(data.order?.orderNumber || data.reportNumber), 21, 167, 225);
-          row('Client Name/Code', `${text(lab.name)} (${text(lab.code)})`, 21, 183, 225);
+          row('Client Name/Code', text(lab.name) + ' (' + text(lab.code) + ')', 21, 183, 225);
           row('Referring customer', text(data.order?.referredBy || ''), 21, 199, 225);
 
           row('Registration', formatDate(data.order?.orderedAt), 302, 119, 220);
           row('Collected Date', formatDate(firstSample.collectedAt), 302, 135, 220);
           row('Reported Date', formatDate(data.finalizedAt), 302, 151, 220);
           row('Barcode No', text(firstSample.accessionNumber || data.order?.orderNumber || ''), 302, 167, 220);
-          row(
-            'Report Status',
-            text(data.order?.status || 'FINAL').replace(/_/g, ' '),
-            302,
-            183,
-            220,
-          );
+          row('Report Status', text(data.order?.status || 'FINAL').replace(/_/g, ' '), 302, 183, 220);
 
           doc.lineWidth(0.7).moveTo(LEFT, 219).lineTo(RIGHT, 219).stroke();
           doc.font('Helvetica-Bold').fontSize(8.3);
@@ -395,35 +401,32 @@ const reportNumber = this.createReportNumber(lab.code);
           const qrY = 673;
           const cell = 3;
           for (let r = 0; r < 21; r += 1) {
-            for (let c = 0; c < 21; c += 1) {
+            for (let col = 0; col < 21; col += 1) {
               const finder = (ox: number, oy: number) => {
-                const dx = c - ox;
+                const dx = col - ox;
                 const dy = r - oy;
                 if (dx < 0 || dx > 6 || dy < 0 || dy > 6) return false;
                 return dx === 0 || dx === 6 || dy === 0 || dy === 6 || (dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4);
               };
               const isFinder = finder(0, 0) || finder(14, 0) || finder(0, 14);
-              const pseudo = ((seed + r * 92821 + c * 68917 + r * c * 97 + pageNumber * 13) >>> 0) % 7 < 3;
-              if (isFinder || pseudo) doc.rect(qrX + c * cell, qrY + r * cell, cell, cell).fill();
+              const pseudo = ((seed + r * 92821 + col * 68917 + r * col * 97 + pageNumber * 13) >>> 0) % 7 < 3;
+              if (isFinder || pseudo) doc.rect(qrX + col * cell, qrY + r * cell, cell, cell).fill();
             }
           }
         };
 
         const drawFooter = (pageNumber: number, totalPages: number) => {
           drawVerificationMark(pageNumber);
-
           doc.font('Helvetica').fontSize(6.3);
           doc.text('*Please correlate with clinical conditions.', 39, 733, { width: 245, lineGap: 0 });
           doc.text('*This report is not used for medico legal purpose.', 39, 745, { width: 260, lineGap: 0 });
           doc.text('*This is a computer-generated report and does not require a signature.', 39, 757, { width: 285, lineGap: 0 });
-
           doc.font('Helvetica-Bold').fontSize(7.6);
-          doc.text(`Dr. ${text(data.finalizedBy?.username || '')}`, 270, 704, { width: 150, align: 'center', lineGap: 0 });
+          doc.text('Dr. ' + text(data.finalizedBy?.username || ''), 270, 704, { width: 150, align: 'center', lineGap: 0 });
           doc.font('Helvetica').fontSize(6.8);
           doc.text('Consultant Pathologist', 270, 716, { width: 150, align: 'center', lineGap: 0 });
-
           doc.font('Helvetica').fontSize(7);
-          doc.text(`${pageNumber} / ${totalPages}`, 505, 806, { width: 65, align: 'right', lineGap: 0 });
+          doc.text(pageNumber + ' / ' + totalPages, 505, 806, { width: 65, align: 'right', lineGap: 0 });
         };
 
         const startPage = () => {
@@ -445,13 +448,13 @@ const reportNumber = this.createReportNumber(lab.code);
           if (typeof range === 'string') return range;
           if (range && typeof range === 'object') {
             if (range.displayRange) return String(range.displayRange);
-            if (range.low != null && range.high != null) return `${range.low} - ${range.high}`;
-            if (range.low != null) return `>= ${range.low}`;
-            if (range.high != null) return `<= ${range.high}`;
+            if (range.low != null && range.high != null) return range.low + ' - ' + range.high;
+            if (range.low != null) return '>= ' + range.low;
+            if (range.high != null) return '<= ' + range.high;
           }
-          if (parameter.normalMin != null && parameter.normalMax != null) return `${parameter.normalMin} - ${parameter.normalMax}`;
-          if (parameter.normalMin != null) return `>= ${parameter.normalMin}`;
-          if (parameter.normalMax != null) return `<= ${parameter.normalMax}`;
+          if (parameter.normalMin != null && parameter.normalMax != null) return parameter.normalMin + ' - ' + parameter.normalMax;
+          if (parameter.normalMin != null) return '>= ' + parameter.normalMin;
+          if (parameter.normalMax != null) return '<= ' + parameter.normalMax;
           return '';
         };
 
@@ -468,7 +471,7 @@ const reportNumber = this.createReportNumber(lab.code);
           doc.font('Helvetica-Bold').fontSize(8.6).text(department, LEFT, cursorY, { width: RIGHT - LEFT, align: 'center', lineGap: 0 });
           cursorY += 12;
           doc.font('Helvetica-Bold').fontSize(8.6).text(testName, 90, cursorY, { width: 335, align: 'center', lineGap: 0 });
-          if (sampleType) doc.font('Helvetica-Bold').fontSize(6.5).text(`Sample Type: ${sampleType}`, 12, cursorY + 1, { width: 130, lineGap: 0 });
+          if (sampleType) doc.font('Helvetica-Bold').fontSize(6.5).text('Sample Type: ' + sampleType, 12, cursorY + 1, { width: 130, lineGap: 0 });
           cursorY += 14;
 
           parameters.forEach((parameter: any, index: number) => {
@@ -478,10 +481,9 @@ const reportNumber = this.createReportNumber(lab.code);
             const unit = text(parameter.unit || '');
             const flag = flagText(parameter.flag);
             const abnormal = parameter.flag === 'LOW' || parameter.flag === 'HIGH';
-            const methodLine = index === 0 && method ? `METHOD : ${method.toUpperCase()}` : '';
+            const methodLine = index === 0 && method ? 'METHOD : ' + method.toUpperCase() : '';
             const rowHeight = methodLine ? 27 : 16;
             ensureSpace(rowHeight);
-
             doc.font(abnormal ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.0);
             doc.text(name, index === 0 ? 12 : 31, cursorY, { width: 205, lineGap: 0 });
             doc.text(value, 235, cursorY, { width: 92, lineGap: 0 });
@@ -489,7 +491,6 @@ const reportNumber = this.createReportNumber(lab.code);
             doc.text(ref, 399, cursorY, { width: 103, lineGap: 0 });
             doc.text(unit, 507, cursorY, { width: 63, lineGap: 0 });
             cursorY += 10;
-
             if (methodLine) {
               doc.font('Helvetica').fontSize(5.7).text(methodLine, index === 0 ? 12 : 31, cursorY, { width: 235, lineGap: 0 });
               cursorY += 9;
@@ -522,12 +523,14 @@ const reportNumber = this.createReportNumber(lab.code);
         }
 
         doc.end();
+      }).then((pdf) => {
+        console.info('[PDF] order=' + orderId + ' status=' + order.status + ' totalMs=' + (Date.now() - startedAt) + ' bytes=' + pdf.length);
+        return pdf;
       });
     } catch {
       throw new ServiceUnavailableException('PDF generation is temporarily unavailable');
     }
   }
-
   private getReportShape(report: any) {
     return {
       id: report.id,
@@ -555,6 +558,17 @@ private createReportNumber(labCode: string): string {
     const order = await this.prisma.labOrder.findFirst({
       where: { id: orderId, labId: currentUser.labId },
       include: {
+        lab: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            mobile: true,
+            email: true,
+            address: true,
+            icon: true,
+          },
+        },
         patient: true,
         samples: true,
         items: {
