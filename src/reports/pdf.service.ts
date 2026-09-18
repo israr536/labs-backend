@@ -66,10 +66,22 @@ export class PdfService {
     const date = (value?: Date | null) =>
       value ? new Date(value).toLocaleString('en-IN') : 'N/A';
 
-    doc.font('Helvetica-Bold').fontSize(20).text(e(data.lab.name), { align: 'center' });
-    doc.font('Helvetica').fontSize(9).text(e(data.lab.address || ''), { align: 'center' });
-    doc.text(`${e(data.lab.mobile)}${data.lab.email ? ` | ${e(data.lab.email)}` : ''}`, {
-      align: 'center',
+    const headerX = 42;
+    const headerWidth = 511;
+    doc.font('Helvetica-Bold').fontSize(24).fillColor('#111111').text(e(data.lab.name), headerX, doc.y, {
+      width: headerWidth,
+      align: 'left',
+      lineGap: 3,
+    });
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#172033').text(e(data.lab.address || ''), headerX, doc.y + 3, {
+      width: headerWidth,
+      align: 'left',
+      lineGap: 3,
+    });
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#172033').text(`Mob: ${e(data.lab.mobile)}${data.lab.email ? `    E-mail: ${e(data.lab.email)}` : ''}`, headerX, doc.y + 4, {
+      width: headerWidth,
+      align: 'left',
+      lineGap: 3,
     });
     doc.moveDown(1);
     doc.moveTo(42, doc.y).lineTo(553, doc.y).stroke();
