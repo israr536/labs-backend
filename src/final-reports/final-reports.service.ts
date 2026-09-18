@@ -230,7 +230,7 @@ const reportNumber = this.createReportNumber(lab.code);
     });
     if (!report) {
       const order = await this.getOrder(currentUser, orderId);
-      if (order.status === OrderStatus.FINAL) {
+      if (order.status === OrderStatus.FINAL || order.status === OrderStatus.VERIFIED) {
         return this.finalize(currentUser, orderId, order);
       }
       throw new NotFoundException('Final report not found');
