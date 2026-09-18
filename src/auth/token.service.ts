@@ -5,7 +5,7 @@ import { AuthUser, TokenPayload } from './auth.types';
 @Injectable()
 export class TokenService {
   private readonly secret: string;
-  private readonly accessTtlSeconds = Number(process.env.ACCESS_TOKEN_TTL ?? 21600);
+  private readonly accessTtlSeconds = Number(process.env.ACCESS_TOKEN_TTL ?? 900);
 
   constructor() {
     const secret = process.env.ACCESS_TOKEN_SECRET;
