@@ -39,7 +39,7 @@ export class OrdersService {
 
   async createCompleteReport(currentUser: AuthUser, body: CompleteReportBody) {
     const requestedStatus = OrderStatus.FINAL;
-    const shouldFinalize = requestedStatus === 'Completed' || requestedStatus === 'Critical' || requestedStatus === OrderStatus.FINAL;
+    const shouldFinalize = true;
     if (shouldFinalize && currentUser.role !== 'ADMIN' && currentUser.role !== 'TECHNICIAN') throw new BadRequestException('Only an administrator or technician can complete and finalize a report');
 
     const patient = await this.resolvePatient(currentUser, body);
