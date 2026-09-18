@@ -47,7 +47,12 @@ export class ReportsController {
     const data = await this.reportsService.generate(user, id);
     const buffer = await this.reportTemplateService.generatePdf(data, template);
     const selected = this.reportTemplateService.normalize(template);
-    res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename=report-${id}-${selected}.pdf` });
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename=report-${id}-${selected}.pdf`,
+      'Cache-Control': 'private, no-store, max-age=0',
+      Pragma: 'no-cache',
+    });
     res.send(buffer);
   }
 
