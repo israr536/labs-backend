@@ -62,7 +62,7 @@ export class PatientsService {
       name: body.name === undefined ? undefined : requiredString(body.name, 'name'),
       dateOfBirth: body.dateOfBirth === undefined ? undefined : optionalDate(body.dateOfBirth, 'dateOfBirth'),
       age: body.age === undefined ? undefined : optionalInteger(body.age, 'age'),
-      gender: body.gender === undefined ? undefined : enumValue(Gender, body.gender, 'gender'),
+      gender: body.gender === undefined ? undefined : optionalEnumValue(Gender, body.gender, 'gender'),
       mobile: body.mobile === undefined ? undefined : optionalString(body.mobile, 'mobile'),
       email: body.email === undefined ? undefined : optionalString(body.email, 'email'),
       address: body.address === undefined ? undefined : optionalString(body.address, 'address'),
