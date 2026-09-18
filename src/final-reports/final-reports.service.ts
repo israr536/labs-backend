@@ -218,7 +218,40 @@ const reportNumber = this.createReportNumber(lab.code);
         finalizedBy: { select: { id: true, username: true, role: true } },
       },
     });
-    if (!report) throw new NotFoundException('Final report not found');
+
+    // A report may be printed before the user explicitly selects a report status
+    // or finalizes the order. In that case use the current order/results as a
+    // live preview instead of failing with "Final report not found".
+    if (!report) {
+      const order = await this.getOrder(currentUser, orderId);
+      if (!order.items.length) throw new NotFoundException('Report has no tests');
+
+      const lab = order.lab ?? (await this.prisma.lab.findUnique({
+        where: { id: currentUser.labId },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          mobile: true,
+          email: true,
+          address: true,
+          icon: true,
+        },
+      }));
+      if (!lab) throw new NotFoundException('Lab not found');
+
+      const previewAt = new Date();
+      const snapshot = this.buildSnapshot(lab, order, previewAt);
+      return {
+        ...snapshot,
+        id: order.id,
+        reportNumber: order.orderNumber,
+        version: 0,
+        finalizedAt: null,
+        finalizedBy: null,
+        isPreview: true,
+      };
+    }
 
     const snapshot = report.snapshot as any;
     return {
@@ -227,6 +260,7 @@ const reportNumber = this.createReportNumber(lab.code);
       version: report.currentVersion,
       finalizedAt: report.finalizedAt,
       finalizedBy: report.finalizedBy,
+      isPreview: false,
       ...snapshot,
     };
   }
@@ -322,7 +356,7 @@ const reportNumber = this.createReportNumber(lab.code);
           row('Collected Date', formatDate(firstSample.collectedAt), 302, 135, 220);
           row('Reported Date', formatDate(data.finalizedAt), 302, 151, 220);
           row('Barcode No', text(firstSample.accessionNumber || data.order?.orderNumber || ''), 302, 167, 220);
-          row('Report Status', 'Final', 302, 183, 220);
+          row('Report Status', text(data.isPreview ? 'Preview' : 'Final'), 302, 183, 220);
 
           doc.lineWidth(0.7).moveTo(LEFT, 219).lineTo(RIGHT, 219).stroke();
           doc.font('Helvetica-Bold').fontSize(8.3);
