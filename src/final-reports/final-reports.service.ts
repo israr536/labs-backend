@@ -20,7 +20,10 @@ export class FinalReportsService {
 
   async finalize(currentUser: AuthUser, orderId: string, loadedOrder?: any) {
     const order = loadedOrder ?? (await this.getOrder(currentUser, orderId));
-    if (order.status === OrderStatus.FINAL) return this.getReport(currentUser, orderId);
+    const existingReport = await this.prisma.finalReport.findFirst({
+      where: { orderId: order.id, labId: currentUser.labId },
+    });
+    if (existingReport) return this.getReport(currentUser, orderId);
     if (order.status !== OrderStatus.VERIFIED) {
       throw new BadRequestException('Only verified orders can be finalized');
     }
@@ -76,7 +79,11 @@ const reportNumber = this.createReportNumber(lab.code);
 
     const report = await this.prisma.$transaction(async (tx) => {
       const claimed = await tx.labOrder.updateMany({
-        where: { id: order.id, labId: currentUser.labId, status: OrderStatus.VERIFIED },
+        where: {
+          id: order.id,
+          labId: currentUser.labId,
+          status: { in: [OrderStatus.VERIFIED, OrderStatus.FINAL] },
+        },
         data: { status: OrderStatus.FINAL },
       });
       if (claimed.count !== 1) throw new ConflictException('Order finalization was already completed or changed. Reload the order.');
@@ -218,7 +225,13 @@ const reportNumber = this.createReportNumber(lab.code);
         finalizedBy: { select: { id: true, username: true, role: true } },
       },
     });
-    if (!report) throw new NotFoundException('Final report not found');
+    if (!report) {
+      const order = await this.getOrder(currentUser, orderId);
+      if (order.status === OrderStatus.FINAL) {
+        return this.finalize(currentUser, orderId, order);
+      }
+      throw new NotFoundException('Final report not found');
+    }
 
     const snapshot = report.snapshot as any;
     return {
