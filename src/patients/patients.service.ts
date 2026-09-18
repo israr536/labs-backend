@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Gender } from '@prisma/client';
-import { enumValue, optionalDate, optionalInteger, optionalString, requiredString } from '../common/validation';
+import { optionalDate, optionalEnumValue, optionalInteger, optionalString, requiredString } from '../common/validation';
 import { AuthUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionService } from '../labs/subscription.service';
@@ -17,7 +17,7 @@ export class PatientsService {
       name: requiredString(body.name, 'name'),
       dateOfBirth: optionalDate(body.dateOfBirth, 'dateOfBirth'),
       age: optionalInteger(body.age, 'age'),
-      gender: enumValue(Gender, body.gender, 'gender'),
+      gender: optionalEnumValue(Gender, body.gender, 'gender'),
       mobile: optionalString(body.mobile, 'mobile'),
       email: optionalString(body.email, 'email'),
       address: optionalString(body.address, 'address'),
