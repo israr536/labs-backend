@@ -271,7 +271,7 @@ const reportNumber = this.createReportNumber(lab.code);
       if (!lab) throw new NotFoundException('Lab not found');
 
       data = {
-        ...this.buildSnapshot(lab, order, order.updatedAt ?? order.createdAt, order.status),
+        ...this.buildSnapshot(lab, order, null, order.status),
         id: order.id,
         reportNumber: order.orderNumber,
         version: null,
@@ -368,7 +368,13 @@ const reportNumber = this.createReportNumber(lab.code);
           row('Collected Date', formatDate(firstSample.collectedAt), 302, 135, 220);
           row('Reported Date', formatDate(data.finalizedAt), 302, 151, 220);
           row('Barcode No', text(firstSample.accessionNumber || data.order?.orderNumber || ''), 302, 167, 220);
-          row('Report Status', 'Final', 302, 183, 220);
+          row(
+            'Report Status',
+            text(data.order?.status || 'FINAL').replace(/_/g, ' '),
+            302,
+            183,
+            220,
+          );
 
           doc.lineWidth(0.7).moveTo(LEFT, 219).lineTo(RIGHT, 219).stroke();
           doc.font('Helvetica-Bold').fontSize(8.3);
