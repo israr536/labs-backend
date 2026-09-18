@@ -532,3 +532,17 @@ model PendingLabRegistration {
   @@index([adminUsername])
   @@index([expiresAt])
 }
+
+model ContactInquiry {
+  id        String   @id @default(uuid())
+  name      String
+  email     String
+  topic     String
+  message   String
+  status    String   @default("NEW")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([email])
+}
