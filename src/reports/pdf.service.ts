@@ -26,7 +26,7 @@ interface ReportData {
     id?: string;
     name: string;
     age?: number | null;
-    gender: string;
+    gender?: string | null;
     mobile?: string | null;
     email?: string | null;
     dateOfBirth?: Date | null;
