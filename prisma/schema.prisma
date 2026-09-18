@@ -139,7 +139,7 @@ model Patient {
   name String
   dateOfBirth DateTime?
   age Int?
-  gender Gender
+  gender Gender?
   mobile String?
   email String?
   address String?
