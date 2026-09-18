@@ -166,8 +166,23 @@ export class AuthService {
   async logout(body: RefreshBody) {
     const refreshToken = requiredString(body.refreshToken, 'refreshToken');
     const hashedToken = this.tokenService.hashRefreshToken(refreshToken);
-    const token = await this.prisma.refreshToken.findUnique({ where: { token: hashedToken }, select: { familyId: true } });
-    if (token) await this.prisma.refreshToken.updateMany({ where: { familyId: token.familyId, revokedAt: null }, data: { revokedAt: new Date() } });
+    const token = await this.prisma.refreshToken.findUnique({ where: { token: hashedToken }, select: { familyId: true, userId: true, user: { select: { labId: true } } } });
+    if (token) {
+      const logoutAt = new Date();
+      await this.prisma.$transaction(async (tx) => {
+        await tx.refreshToken.updateMany({ where: { familyId: token.familyId, revokedAt: null }, data: { revokedAt: logoutAt } });
+        await tx.auditLog.create({
+          data: {
+            labId: token.user.labId,
+            actorId: token.userId,
+            action: 'LOGOUT',
+            entity: 'User',
+            entityId: token.userId,
+            metadata: { logoutAt: logoutAt.toISOString() },
+          },
+        });
+      });
+    }
     return { success: true };
   }
 
