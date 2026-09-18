@@ -185,7 +185,7 @@ export class OrdersService {
     if (!Number.isInteger(expectedRevision) || expectedRevision !== order.revision) throw new BadRequestException('The report revision is stale. Reload the report and try again.');
     const patient = body.patient && typeof body.patient === 'object' ? body.patient as Record<string, unknown> : undefined;
     const results = Array.isArray(body.results) ? body.results : [];
-    const requestedStatus = typeof body.status === 'string' && body.status.trim() ? body.status.trim() : OrderStatus.FINAL;
+    const requestedStatus = OrderStatus.FINAL;
     const shouldFinalize = requestedStatus === 'Completed' || requestedStatus === 'Critical' || requestedStatus === OrderStatus.FINAL;
     if (shouldFinalize && currentUser.role !== 'ADMIN' && currentUser.role !== 'TECHNICIAN') throw new BadRequestException('Only an administrator or technician can complete and finalize a report');
 
