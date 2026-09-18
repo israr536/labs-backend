@@ -7,6 +7,7 @@ export function rateLimitMiddleware(options: { windowMs: number; max: number }) 
   return (request: Request, response: Response, next: NextFunction) => {
     // Browser CORS preflight requests are transport-level negotiation and
     // should never consume or exhaust the application request quota.
+    
     if (request.method === 'OPTIONS') return next();
 
     const key = request.ip || request.socket.remoteAddress || 'unknown';
