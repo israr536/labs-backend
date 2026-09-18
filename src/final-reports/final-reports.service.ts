@@ -24,7 +24,10 @@ export class FinalReportsService {
       where: { orderId: order.id, labId: currentUser.labId },
     });
     if (existingReport) return this.getReport(currentUser, orderId);
-    if (order.status !== OrderStatus.VERIFIED) {
+    if (
+      order.status !== OrderStatus.VERIFIED &&
+      order.status !== OrderStatus.FINAL
+    ) {
       throw new BadRequestException('Only verified orders can be finalized');
     }
     if (!order.items.length) throw new BadRequestException('Order has no tests');
