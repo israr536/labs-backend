@@ -199,7 +199,7 @@ export class AuthService {
     const refreshTokenDays = this.getRefreshTokenDays();
     const expiresAt = new Date(Date.now() + refreshTokenDays * 24 * 60 * 60 * 1000);
     await this.prisma.refreshToken.create({ data: { userId: user.id, token: this.tokenService.hashRefreshToken(refreshToken), familyId: randomUUID(), expiresAt } });
-    return { accessToken: this.tokenService.signAccessToken({ id: user.id, labId: user.labId, username: user.username, role: user.role }), refreshToken, expiresIn: Number(process.env.ACCESS_TOKEN_TTL ?? 900) };
+    return { accessToken: this.tokenService.signAccessToken({ id: user.id, labId: user.labId, username: user.username, role: user.role }), refreshToken, expiresIn: Number(process.env.ACCESS_TOKEN_TTL ?? 21600) };
   }
 
   private getRefreshTokenDays(): number {
