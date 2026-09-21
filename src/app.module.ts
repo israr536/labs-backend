@@ -13,6 +13,7 @@ import { FinalReportsModule } from './final-reports/final-reports.module';
 import { LabsModule } from './labs/labs.module';
 import { OrdersModule } from './orders/orders.module';
 import { PatientsModule } from './patients/patients.module';
+import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PerformanceInterceptor } from './common/performance.interceptor';
 import { ReferenceRangesModule } from './reference-ranges/reference-ranges.module';
@@ -31,6 +32,7 @@ import { UsersModule } from './users/users.module';
     LabsModule,
     UsersModule,
     PatientsModule,
+    PaymentsModule,
     TestsModule,
     ReferenceRangesModule,
     ReportsModule,
