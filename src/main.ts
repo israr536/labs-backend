@@ -6,7 +6,7 @@ import { requestContextMiddleware } from './common/request-context.middleware';
 import { SanitizedExceptionFilter } from './common/sanitized-exception.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   const express = app.getHttpAdapter().getInstance() as {
     disable?: (setting: string) => void;
     set?: (setting: string, value: unknown) => void;
