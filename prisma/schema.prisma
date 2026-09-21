@@ -109,6 +109,7 @@ model Lab {
   samples Sample[]
   finalReports FinalReport[]
   auditLogs AuditLog[]
+  payments Payment[]
 }
 
 model User {
@@ -531,6 +532,27 @@ model PendingLabRegistration {
   @@index([code])
   @@index([adminUsername])
   @@index([expiresAt])
+}
+
+
+model Payment {
+  id String @id @default(uuid())
+  labId String
+  userId String
+  providerOrderId String @unique
+  providerPaymentId String? @unique
+  amount Int
+  currency String @default("INR")
+  plan String
+  status String @default("CREATED")
+  signature String?
+  notes Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lab Lab @relation(fields: [labId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([labId, createdAt])
+  @@index([status, createdAt])
 }
 
 model ContactInquiry {
