@@ -3,11 +3,11 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export const SUBSCRIPTION_PLANS = {
-  TRIAL: { name: 'Trial', maxUsers: 3, maxPatients: 100, maxTests: null, maxOrders: 250 },
-  FREE: { name: 'Free', maxUsers: 2, maxPatients: 100, maxTests: 25, maxOrders: 100 },
-  STARTER: { name: 'Starter', maxUsers: 5, maxPatients: 5000, maxTests: 500, maxOrders: 10000 },
-  PROFESSIONAL: { name: 'Professional', maxUsers: 15, maxPatients: 25000, maxTests: 2000, maxOrders: 50000 },
-  ENTERPRISE: { name: 'Enterprise', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  TRIAL: { name: 'Free', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  FREE: { name: 'Free', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  STARTER: { name: 'Free', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  PROFESSIONAL: { name: 'Free', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  ENTERPRISE: { name: 'Free', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
 } as const;
 
 export type SubscriptionPlan = keyof typeof SUBSCRIPTION_PLANS;
@@ -33,16 +33,13 @@ export class SubscriptionService {
     if (!lab) throw new NotFoundException('Lab not found');
     const plan = this.normalizePlan(lab.subscriptionPlan);
     const now = Date.now();
-    const startsAt = lab.subscriptionStartAt?.getTime();
-    const endsAt = lab.subscriptionEndAt?.getTime();
-    const status = startsAt && startsAt > now ? 'scheduled' : endsAt && endsAt <= now ? 'expired' : 'active';
+    const status = 'active' as const;
     return { plan, planName: SUBSCRIPTION_PLANS[plan].name, status, startsAt: lab.subscriptionStartAt, endsAt: lab.subscriptionEndAt, limits: SUBSCRIPTION_PLANS[plan], usage: await this.getUsage(labId) };
   }
 
   async assertWithinLimit(labId: string, resource: UsageResource, additional = 1, db: PrismaLike = this.prisma) {
     const lab = await db.lab.findUnique({ where: { id: labId }, select: { subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true } });
     if (!lab) throw new NotFoundException('Lab not found');
-    this.assertSubscriptionDates(lab.subscriptionStartAt, lab.subscriptionEndAt);
     if (!lab.subscriptionPlan) return;
     const plan = this.normalizePlan(lab.subscriptionPlan);
     const limit = this.getLimit(plan, resource);
@@ -67,7 +64,6 @@ export class SubscriptionService {
     const row = result[0];
     if (!row) throw new NotFoundException('Lab not found');
     if (!row.locked) throw new ConflictException('Another report is being created for this laboratory. Please retry.');
-    this.assertSubscriptionDates(row.subscriptionStartAt, row.subscriptionEndAt);
     if (!row.subscriptionPlan) return;
     const plan = this.normalizePlan(row.subscriptionPlan);
     const limit = SUBSCRIPTION_PLANS[plan].maxOrders;
@@ -77,7 +73,6 @@ export class SubscriptionService {
   async assertCanCreateOrder(labId: string, db: PrismaLike = this.prisma) {
     const lab = await db.lab.findUnique({ where: { id: labId }, select: { subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true } });
     if (!lab) throw new NotFoundException('Lab not found');
-    this.assertSubscriptionDates(lab.subscriptionStartAt, lab.subscriptionEndAt);
     if (!lab.subscriptionPlan) return;
     const plan = this.normalizePlan(lab.subscriptionPlan);
     const limit = SUBSCRIPTION_PLANS[plan].maxOrders;
@@ -100,12 +95,6 @@ export class SubscriptionService {
       db.labOrder.count({ where: { labId } }),
     ]);
     return { users, patients, tests, orders };
-  }
-
-  private assertSubscriptionDates(startAt: Date | null, endAt: Date | null) {
-    const now = Date.now();
-    if (startAt && startAt.getTime() > now) throw new ForbiddenException('Subscription has not started yet');
-    if (endAt && endAt.getTime() <= now) throw new ForbiddenException('Subscription has expired');
   }
 
   private getLimit(plan: SubscriptionPlan, resource: UsageResource) {
