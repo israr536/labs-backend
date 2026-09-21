@@ -32,7 +32,6 @@ export class SubscriptionService {
     const lab = await this.prisma.lab.findUnique({ where: { id: labId }, select: { id: true, subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true } });
     if (!lab) throw new NotFoundException('Lab not found');
     const plan = this.normalizePlan(lab.subscriptionPlan);
-    const now = Date.now();
     const status = 'active' as const;
     return { plan, planName: SUBSCRIPTION_PLANS[plan].name, status, startsAt: lab.subscriptionStartAt, endsAt: lab.subscriptionEndAt, limits: SUBSCRIPTION_PLANS[plan], usage: await this.getUsage(labId) };
   }
