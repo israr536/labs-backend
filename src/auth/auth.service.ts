@@ -19,7 +19,6 @@ interface RefreshBody { refreshToken?: unknown }
 interface RequestSignupOtpBody extends RegisterLabBody {}
 interface VerifySignupOtpBody { requestId?: unknown; otp?: unknown }
 const MIN_PASSWORD_LENGTH = 8;
-const TRIAL_DAYS = 14;
 const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
 
@@ -116,15 +115,13 @@ export class AuthService {
     if (existingLab) throw new ConflictException('Lab code already exists');
     if (existingUser) throw new ConflictException('Email already exists');
     const result = await this.prisma.$transaction(async (tx) => {
-      const trialStart = new Date();
-      const trialEnd = new Date(trialStart.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
-      const lab = await tx.lab.create({ data: { code: pending.code, name: pending.name, mobile: pending.mobile, email: pending.email, address: pending.address, subscriptionPlan: 'TRIAL', subscriptionStartAt: trialStart, subscriptionEndAt: trialEnd } });
+      const lab = await tx.lab.create({ data: { code: pending.code, name: pending.name, mobile: pending.mobile, email: pending.email, address: pending.address, subscriptionPlan: 'FREE', subscriptionStartAt: null, subscriptionEndAt: null } });
       const user = await tx.user.create({ data: { labId: lab.id, username: pending.adminEmail ?? pending.adminUsername, mobile: pending.adminMobile, email: pending.adminEmail ?? pending.adminUsername, password: pending.adminPasswordHash, role: UserRole.ADMIN } });
 
       await tx.pendingLabRegistration.delete({ where: { id: pending.id } });
       return { lab, user };
     });
-    return { success: true, lab: result.lab, user: this.safeUser(result.user), enabledTestCount: 0, message: `Signup completed. Your ${TRIAL_DAYS}-day trial is active. All active catalog tests are available by default; lab-specific copies are created only when needed.` };
+    return { success: true, lab: result.lab, user: this.safeUser(result.user), enabledTestCount: 0, message: 'Signup completed. Your PathMLT account is free with unlimited users, patients, tests, and reports for now. All active catalog tests are available by default; lab-specific copies are created only when needed.' };
   }
 
   async login(body: LoginBody) {
