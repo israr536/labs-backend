@@ -115,7 +115,7 @@ export class AuthService {
     if (existingLab) throw new ConflictException('Lab code already exists');
     if (existingUser) throw new ConflictException('Email already exists');
     const result = await this.prisma.$transaction(async (tx) => {
-      const lab = await tx.lab.create({ data: { code: pending.code, name: pending.name, mobile: pending.mobile, email: pending.email, address: pending.address, subscriptionPlan: 'FREE', subscriptionStartAt: null, subscriptionEndAt: null } });
+      const lab = await tx.lab.create({ data: { code: pending.code, name: pending.name, mobile: pending.mobile, email: pending.email, address: pending.address, subscriptionPlan: 'FREE', subscriptionStartAt: new Date(), subscriptionEndAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) } });
       const user = await tx.user.create({ data: { labId: lab.id, username: pending.adminEmail ?? pending.adminUsername, mobile: pending.adminMobile, email: pending.adminEmail ?? pending.adminUsername, password: pending.adminPasswordHash, role: UserRole.ADMIN } });
 
       await tx.pendingLabRegistration.delete({ where: { id: pending.id } });
