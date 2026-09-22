@@ -69,12 +69,36 @@ export class PaymentsService {
       .digest('hex');
     if (expected !== signature) throw new BadRequestException('Invalid Razorpay payment signature');
 
-    await this.prisma.payment.update({
-      where: { id: payment.id },
-      data: { providerPaymentId: paymentId, signature, status: 'VERIFIED' },
+    const config = PLAN_PRICES[payment.plan];
+    if (!config) throw new BadRequestException('Payment plan is no longer available');
+
+    const now = new Date();
+    const subscriptionEndAt = new Date(now.getTime() + config.days * 24 * 60 * 60 * 1000);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: { providerPaymentId: paymentId, signature, status: 'VERIFIED' },
+      });
+      await tx.lab.update({
+        where: { id: labId },
+        data: {
+          subscriptionPlan: payment.plan,
+          subscriptionStartAt: now,
+          subscriptionEndAt,
+        },
+      });
     });
 
-    return { success: true, paymentId, orderId, status: 'VERIFIED', plan: payment.plan };
+    return {
+      success: true,
+      paymentId,
+      orderId,
+      status: 'VERIFIED',
+      plan: payment.plan,
+      subscriptionStartAt: now,
+      subscriptionEndAt,
+    };
   }
 
   async webhook(rawBody: Buffer, signature: string | undefined) {
