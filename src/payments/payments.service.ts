@@ -64,6 +64,19 @@ export class PaymentsService {
     const payment = await this.prisma.payment.findFirst({ where: { providerOrderId: orderId, labId, userId } });
     if (!payment) throw new UnauthorizedException('Payment order not found');
 
+    if (payment.providerPaymentId && (payment.status === 'VERIFIED' || payment.status === 'CAPTURED')) {
+      const lab = await this.prisma.lab.findUnique({ where: { id: labId }, select: { subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true } });
+      return {
+        success: true,
+        paymentId: payment.providerPaymentId,
+        orderId,
+        status: payment.status,
+        plan: payment.plan,
+        subscriptionStartAt: lab?.subscriptionStartAt ?? null,
+        subscriptionEndAt: lab?.subscriptionEndAt ?? null,
+      };
+    }
+
     const expected = createHmac('sha256', process.env.RAZORPAY_KEY_SECRET ?? '')
       .update(`${orderId}|${paymentId}`)
       .digest('hex');
