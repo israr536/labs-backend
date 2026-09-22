@@ -3,11 +3,13 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export const SUBSCRIPTION_PLANS = {
-  TRIAL: { name: 'Free', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
-  FREE: { name: 'Free', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
-  STARTER: { name: 'Free', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
-  PROFESSIONAL: { name: 'Free', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
-  ENTERPRISE: { name: 'Free', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  TRIAL: { name: 'Free Trial', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  FREE: { name: 'Free Trial', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  MONTHLY: { name: 'Monthly', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  YEARLY: { name: 'Yearly', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  STARTER: { name: 'Monthly', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  PROFESSIONAL: { name: 'Yearly', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  ENTERPRISE: { name: 'Yearly', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
 } as const;
 
 export type SubscriptionPlan = keyof typeof SUBSCRIPTION_PLANS;
