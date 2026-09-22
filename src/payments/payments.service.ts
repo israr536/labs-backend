@@ -114,10 +114,28 @@ export class PaymentsService {
 
     const status = payload.event === 'payment.captured' || entity.status === 'captured' ? 'CAPTURED' : payload.event === 'payment.failed' ? 'FAILED' : undefined;
     if (status) {
-      await this.prisma.payment.updateMany({
-        where: { providerOrderId: orderId },
-        data: { providerPaymentId: entity.id, status },
-      });
+      const payment = await this.prisma.payment.findFirst({ where: { providerOrderId: orderId } });
+      if (payment) {
+        await this.prisma.payment.update({
+          where: { id: payment.id },
+          data: { providerPaymentId: entity.id, status },
+        });
+
+        if (status === 'CAPTURED') {
+          const config = PLAN_PRICES[payment.plan];
+          if (config) {
+            const now = new Date();
+            await this.prisma.lab.update({
+              where: { id: payment.labId },
+              data: {
+                subscriptionPlan: payment.plan,
+                subscriptionStartAt: now,
+                subscriptionEndAt: new Date(now.getTime() + config.days * 24 * 60 * 60 * 1000),
+              },
+            });
+          }
+        }
+      }
     }
     return { received: true };
   }
