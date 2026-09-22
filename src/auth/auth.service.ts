@@ -121,7 +121,7 @@ export class AuthService {
       await tx.pendingLabRegistration.delete({ where: { id: pending.id } });
       return { lab, user };
     });
-    return { success: true, lab: result.lab, user: this.safeUser(result.user), enabledTestCount: 0, message: 'Signup completed. Your PathMLT account is free with unlimited users, patients, tests, and reports for now. All active catalog tests are available by default; lab-specific copies are created only when needed.' };
+    return { success: true, lab: result.lab, user: this.safeUser(result.user), enabledTestCount: 0, message: 'Signup completed. Your PathMLT account includes a 30-day free trial with unlimited users, patients, tests, and reports. After the trial ends, choose a paid subscription to continue using PathMLT. All active catalog tests are available by default; lab-specific copies are created only when needed.' };
   }
 
   async login(body: LoginBody) {
