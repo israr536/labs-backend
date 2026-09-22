@@ -34,8 +34,12 @@ export class SubscriptionService {
     const lab = await this.prisma.lab.findUnique({ where: { id: labId }, select: { id: true, subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true } });
     if (!lab) throw new NotFoundException('Lab not found');
     const plan = this.normalizePlan(lab.subscriptionPlan);
-    const status = 'active' as const;
-    return { plan, planName: SUBSCRIPTION_PLANS[plan].name, status, startsAt: lab.subscriptionStartAt, endsAt: lab.subscriptionEndAt, limits: SUBSCRIPTION_PLANS[plan], usage: await this.getUsage(labId) };
+    const now = Date.now();
+    const startsAt = lab.subscriptionStartAt?.getTime();
+    const endsAt = lab.subscriptionEndAt?.getTime();
+    const status = endsAt !== undefined && endsAt <= now ? 'expired' : startsAt !== undefined && startsAt > now ? 'pending' : 'active';
+    const trial = plan === 'FREE' || plan === 'TRIAL';
+    return { plan, planName: SUBSCRIPTION_PLANS[plan].name, status, trial, startsAt: lab.subscriptionStartAt, endsAt: lab.subscriptionEndAt, limits: SUBSCRIPTION_PLANS[plan], usage: await this.getUsage(labId) };
   }
 
   async assertWithinLimit(labId: string, resource: UsageResource, additional = 1, db: PrismaLike = this.prisma) {
