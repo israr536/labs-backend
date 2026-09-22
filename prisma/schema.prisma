@@ -120,6 +120,7 @@ model User {
   email String?
   password String
   role UserRole
+  payments  Payment[]
   isActive Boolean @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
