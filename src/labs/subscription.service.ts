@@ -42,10 +42,62 @@ export class SubscriptionService {
     return { plan, planName: SUBSCRIPTION_PLANS[plan].name, status, trial, startsAt: lab.subscriptionStartAt, endsAt: lab.subscriptionEndAt, limits: SUBSCRIPTION_PLANS[plan], usage: await this.getUsage(labId) };
   }
 
+  async assertSubscriptionActive(labId: string, db: PrismaLike = this.prisma) {
+    const lab = await db.lab.findUnique({
+      where: { id: labId },
+      select: { subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true },
+    });
+    if (!lab) throw new NotFoundException('Lab not found');
+    if (!lab.subscriptionPlan) return;
+    const now = Date.now();
+    if (lab.subscriptionStartAt && lab.subscriptionStartAt.getTime() > now) {
+      throw new ForbiddenException('Your subscription has not started yet');
+    }
+    if (lab.subscriptionEndAt && lab.subscriptionEndAt.getTime() <= now) {
+      throw new ForbiddenException('Your subscription has expired. Please renew your plan');
+    }
+  }
+
+  async activatePaidSubscription(labId: string, planValue: string, db: PrismaLike = this.prisma) {
+    const plan = this.normalizePlan(planValue);
+    if (plan === 'FREE' || plan === 'TRIAL') {
+      throw new ForbiddenException('Paid subscription activation requires a paid plan');
+    }
+    await db.$queryRaw`SELECT "id" FROM "Lab" WHERE "id" = ${labId} FOR UPDATE`;
+    const lab = await db.lab.findUnique({
+      where: { id: labId },
+      select: { subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true },
+    });
+    if (!lab) throw new NotFoundException('Lab not found');
+
+    const now = new Date();
+    const currentPlan = this.normalizePlan(lab.subscriptionPlan);
+    const activePaid = lab.subscriptionEndAt !== null &&
+      lab.subscriptionEndAt.getTime() > now.getTime() &&
+      currentPlan !== 'FREE' && currentPlan !== 'TRIAL';
+    const start = activePaid ? (lab.subscriptionStartAt ?? now) : now;
+    const base = activePaid ? lab.subscriptionEndAt! : now;
+    const days = plan === 'MONTHLY' || plan === 'STARTER' ? 30 : 365;
+    const end = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+
+    await db.lab.update({
+      where: { id: labId },
+      data: { subscriptionPlan: plan, subscriptionStartAt: start, subscriptionEndAt: end },
+    });
+    return { plan, subscriptionStartAt: start, subscriptionEndAt: end };
+  }
+
+  invalidateStatusCache(labId: string) {
+    this.statusCache.delete(labId);
+  }
+
   async assertWithinLimit(labId: string, resource: UsageResource, additional = 1, db: PrismaLike = this.prisma) {
     const lab = await db.lab.findUnique({ where: { id: labId }, select: { subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true } });
     if (!lab) throw new NotFoundException('Lab not found');
     if (!lab.subscriptionPlan) return;
+    const now = Date.now();
+    if (lab.subscriptionStartAt && lab.subscriptionStartAt.getTime() > now) throw new ForbiddenException('Your subscription has not started yet');
+    if (lab.subscriptionEndAt && lab.subscriptionEndAt.getTime() <= now) throw new ForbiddenException('Your subscription has expired. Please renew your plan');
     const plan = this.normalizePlan(lab.subscriptionPlan);
     const limit = this.getLimit(plan, resource);
     if (limit === null) return;
@@ -70,6 +122,9 @@ export class SubscriptionService {
     if (!row) throw new NotFoundException('Lab not found');
     if (!row.locked) throw new ConflictException('Another report is being created for this laboratory. Please retry.');
     if (!row.subscriptionPlan) return;
+    const now = Date.now();
+    if (row.subscriptionStartAt && row.subscriptionStartAt.getTime() > now) throw new ForbiddenException('Your subscription has not started yet');
+    if (row.subscriptionEndAt && row.subscriptionEndAt.getTime() <= now) throw new ForbiddenException('Your subscription has expired. Please renew your plan');
     const plan = this.normalizePlan(row.subscriptionPlan);
     const limit = SUBSCRIPTION_PLANS[plan].maxOrders;
     if (limit !== null && Number(row.usage) + 1 > limit) throw new ForbiddenException(`orders limit reached for the ${SUBSCRIPTION_PLANS[plan].name} plan`);
