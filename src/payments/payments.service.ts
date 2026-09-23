@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { createHash, createHmac } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import Razorpay from 'razorpay';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionService } from '../labs/subscription.service';
@@ -181,7 +182,8 @@ export class PaymentsService {
     const entity = payload.payload?.payment?.entity;
     const orderId = entity?.order_id;
 
-    await this.prisma.$transaction(async (tx) => {
+    try {
+      await this.prisma.$transaction(async (tx) => {
       await tx.razorpayWebhookEvent.create({
         data: {
           providerEventId: eventId,
@@ -225,20 +227,27 @@ export class PaymentsService {
         return;
       }
 
-      await tx.payment.update({
-        where: { id: payment.id },
+      const captured = await tx.payment.updateMany({
+        where: { id: payment.id, status: 'CREATED' },
         data: {
           providerPaymentId: entity?.id ?? payment.providerPaymentId,
           status: 'CAPTURED',
         },
       });
+      if (captured.count !== 1) return;
 
       await this.subscriptionService.activatePaidSubscription(
         payment.labId,
         payment.plan,
         tx,
       );
-    });
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        return { received: true, duplicate: true };
+      }
+      throw error;
+    }
 
     if (orderId) {
       const payment = await this.prisma.payment.findUnique({
