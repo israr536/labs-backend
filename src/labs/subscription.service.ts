@@ -67,6 +67,7 @@ export class SubscriptionService {
     if (plan === 'FREE' || plan === 'TRIAL') {
       throw new ForbiddenException('Paid subscription activation requires a paid plan');
     }
+    await db.$queryRaw`SELECT "id" FROM "Lab" WHERE "id" = ${labId} FOR UPDATE`;
     const lab = await db.lab.findUnique({
       where: { id: labId },
       select: {
@@ -77,7 +78,6 @@ export class SubscriptionService {
     });
     if (!lab) throw new NotFoundException('Lab not found');
 
-    const config = SUBSCRIPTION_PLANS[plan];
     const now = new Date();
     const currentEnd = lab.subscriptionEndAt;
     const currentPlan = this.normalizePlan(lab.subscriptionPlan);
