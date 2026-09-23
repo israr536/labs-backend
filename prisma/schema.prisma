@@ -556,6 +556,16 @@ model Payment {
   @@index([status, createdAt])
 }
 
+model RazorpayWebhookEvent {
+  id String @id @default(uuid())
+  providerEventId String @unique
+  eventType String
+  payload Json
+  receivedAt DateTime @default(now())
+  processedAt DateTime?
+  @@index([eventType, receivedAt])
+}
+
 model ContactInquiry {
   id        String   @id @default(uuid())
   name      String

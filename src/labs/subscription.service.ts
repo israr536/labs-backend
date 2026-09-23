@@ -3,11 +3,13 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export const SUBSCRIPTION_PLANS = {
-  TRIAL: { name: 'Free', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
-  FREE: { name: 'Free', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
-  STARTER: { name: 'Free', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
-  PROFESSIONAL: { name: 'Free', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
-  ENTERPRISE: { name: 'Free', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  TRIAL: { name: 'Free Trial', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  FREE: { name: 'Free Trial', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  MONTHLY: { name: 'Monthly', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  YEARLY: { name: 'Yearly', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  STARTER: { name: 'Monthly', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  PROFESSIONAL: { name: 'Yearly', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
+  ENTERPRISE: { name: 'Yearly', maxUsers: null, maxPatients: null, maxTests: null, maxOrders: null },
 } as const;
 
 export type SubscriptionPlan = keyof typeof SUBSCRIPTION_PLANS;
@@ -32,14 +34,70 @@ export class SubscriptionService {
     const lab = await this.prisma.lab.findUnique({ where: { id: labId }, select: { id: true, subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true } });
     if (!lab) throw new NotFoundException('Lab not found');
     const plan = this.normalizePlan(lab.subscriptionPlan);
-    const status = 'active' as const;
-    return { plan, planName: SUBSCRIPTION_PLANS[plan].name, status, startsAt: lab.subscriptionStartAt, endsAt: lab.subscriptionEndAt, limits: SUBSCRIPTION_PLANS[plan], usage: await this.getUsage(labId) };
+    const now = Date.now();
+    const startsAt = lab.subscriptionStartAt?.getTime();
+    const endsAt = lab.subscriptionEndAt?.getTime();
+    const status = endsAt !== undefined && endsAt <= now ? 'expired' : startsAt !== undefined && startsAt > now ? 'pending' : 'active';
+    const trial = plan === 'FREE' || plan === 'TRIAL';
+    return { plan, planName: SUBSCRIPTION_PLANS[plan].name, status, trial, startsAt: lab.subscriptionStartAt, endsAt: lab.subscriptionEndAt, limits: SUBSCRIPTION_PLANS[plan], usage: await this.getUsage(labId) };
+  }
+
+  async assertSubscriptionActive(labId: string, db: PrismaLike = this.prisma) {
+    const lab = await db.lab.findUnique({
+      where: { id: labId },
+      select: { subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true },
+    });
+    if (!lab) throw new NotFoundException('Lab not found');
+    if (!lab.subscriptionPlan) return;
+    const now = Date.now();
+    if (lab.subscriptionStartAt && lab.subscriptionStartAt.getTime() > now) {
+      throw new ForbiddenException('Your subscription has not started yet');
+    }
+    if (lab.subscriptionEndAt && lab.subscriptionEndAt.getTime() <= now) {
+      throw new ForbiddenException('Your subscription has expired. Please renew your plan');
+    }
+  }
+
+  async activatePaidSubscription(labId: string, planValue: string, db: PrismaLike = this.prisma) {
+    const plan = this.normalizePlan(planValue);
+    if (plan === 'FREE' || plan === 'TRIAL') {
+      throw new ForbiddenException('Paid subscription activation requires a paid plan');
+    }
+    await db.$queryRaw`SELECT "id" FROM "Lab" WHERE "id" = ${labId} FOR UPDATE`;
+    const lab = await db.lab.findUnique({
+      where: { id: labId },
+      select: { subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true },
+    });
+    if (!lab) throw new NotFoundException('Lab not found');
+
+    const now = new Date();
+    const currentPlan = this.normalizePlan(lab.subscriptionPlan);
+    const activePaid = lab.subscriptionEndAt !== null &&
+      lab.subscriptionEndAt.getTime() > now.getTime() &&
+      currentPlan !== 'FREE' && currentPlan !== 'TRIAL';
+    const start = activePaid ? (lab.subscriptionStartAt ?? now) : now;
+    const base = activePaid ? lab.subscriptionEndAt! : now;
+    const days = plan === 'MONTHLY' || plan === 'STARTER' ? 30 : 365;
+    const end = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+
+    await db.lab.update({
+      where: { id: labId },
+      data: { subscriptionPlan: plan, subscriptionStartAt: start, subscriptionEndAt: end },
+    });
+    return { plan, subscriptionStartAt: start, subscriptionEndAt: end };
+  }
+
+  invalidateStatusCache(labId: string) {
+    this.statusCache.delete(labId);
   }
 
   async assertWithinLimit(labId: string, resource: UsageResource, additional = 1, db: PrismaLike = this.prisma) {
     const lab = await db.lab.findUnique({ where: { id: labId }, select: { subscriptionPlan: true, subscriptionStartAt: true, subscriptionEndAt: true } });
     if (!lab) throw new NotFoundException('Lab not found');
     if (!lab.subscriptionPlan) return;
+    const now = Date.now();
+    if (lab.subscriptionStartAt && lab.subscriptionStartAt.getTime() > now) throw new ForbiddenException('Your subscription has not started yet');
+    if (lab.subscriptionEndAt && lab.subscriptionEndAt.getTime() <= now) throw new ForbiddenException('Your subscription has expired. Please renew your plan');
     const plan = this.normalizePlan(lab.subscriptionPlan);
     const limit = this.getLimit(plan, resource);
     if (limit === null) return;
@@ -64,6 +122,9 @@ export class SubscriptionService {
     if (!row) throw new NotFoundException('Lab not found');
     if (!row.locked) throw new ConflictException('Another report is being created for this laboratory. Please retry.');
     if (!row.subscriptionPlan) return;
+    const now = Date.now();
+    if (row.subscriptionStartAt && row.subscriptionStartAt.getTime() > now) throw new ForbiddenException('Your subscription has not started yet');
+    if (row.subscriptionEndAt && row.subscriptionEndAt.getTime() <= now) throw new ForbiddenException('Your subscription has expired. Please renew your plan');
     const plan = this.normalizePlan(row.subscriptionPlan);
     const limit = SUBSCRIPTION_PLANS[plan].maxOrders;
     if (limit !== null && Number(row.usage) + 1 > limit) throw new ForbiddenException(`orders limit reached for the ${SUBSCRIPTION_PLANS[plan].name} plan`);

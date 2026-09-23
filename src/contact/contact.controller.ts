@@ -4,6 +4,7 @@ import { ContactService, type ContactInquiryBody } from './contact.service';
 @Controller('contact')
 export class ContactController {
   constructor(private readonly contactService: ContactService) {}
+  
 
   @Post('inquiries')
   @HttpCode(HttpStatus.CREATED)

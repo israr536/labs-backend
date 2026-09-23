@@ -44,7 +44,7 @@ export class AccessPolicyInterceptor implements NestInterceptor {
 
     // Allow the status endpoint through so expired users can still see their
     // plan state and reach the future billing/renewal flow.
-    if (request.path?.endsWith('/subscription/status')) return next.handle();
+    if (request.path?.endsWith('/subscription/status') || request.path?.includes('/payments/')) return next.handle();
 
     const now = Date.now();
     const startAt = account.lab.subscriptionStartAt?.getTime();

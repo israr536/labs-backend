@@ -115,13 +115,13 @@ export class AuthService {
     if (existingLab) throw new ConflictException('Lab code already exists');
     if (existingUser) throw new ConflictException('Email already exists');
     const result = await this.prisma.$transaction(async (tx) => {
-      const lab = await tx.lab.create({ data: { code: pending.code, name: pending.name, mobile: pending.mobile, email: pending.email, address: pending.address, subscriptionPlan: 'FREE', subscriptionStartAt: null, subscriptionEndAt: null } });
+      const lab = await tx.lab.create({ data: { code: pending.code, name: pending.name, mobile: pending.mobile, email: pending.email, address: pending.address, subscriptionPlan: 'FREE', subscriptionStartAt: new Date(), subscriptionEndAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) } });
       const user = await tx.user.create({ data: { labId: lab.id, username: pending.adminEmail ?? pending.adminUsername, mobile: pending.adminMobile, email: pending.adminEmail ?? pending.adminUsername, password: pending.adminPasswordHash, role: UserRole.ADMIN } });
 
       await tx.pendingLabRegistration.delete({ where: { id: pending.id } });
       return { lab, user };
     });
-    return { success: true, lab: result.lab, user: this.safeUser(result.user), enabledTestCount: 0, message: 'Signup completed. Your PathMLT account is free with unlimited users, patients, tests, and reports for now. All active catalog tests are available by default; lab-specific copies are created only when needed.' };
+    return { success: true, lab: result.lab, user: this.safeUser(result.user), enabledTestCount: 0, message: 'Signup completed. Your PathMLT account includes a 30-day free trial with unlimited users, patients, tests, and reports. After the trial ends, choose a paid subscription to continue using PathMLT. All active catalog tests are available by default; lab-specific copies are created only when needed.' };
   }
 
   async login(body: LoginBody) {
