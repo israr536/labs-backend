@@ -94,7 +94,7 @@ model Lab {
   email String?
   address String?
   icon String?
-  showMethodNames Boolean @default(true)
+  showMethodNames Boolean @default(false)
   isActive Boolean @default(true)
   subscriptionPlan String?
   subscriptionStartAt DateTime?
