@@ -24,8 +24,12 @@ export class PaymentsController {
   }
 
   @Post('webhook')
-  webhook(@Req() request: RawBodyRequest, @Headers('x-razorpay-signature') signature?: string) {
+  webhook(
+    @Req() request: RawBodyRequest,
+    @Headers('x-razorpay-signature') signature?: string,
+    @Headers('x-razorpay-event-id') eventId?: string,
+  ) {
     if (!request.rawBody) throw new Error('Raw request body is unavailable');
-    return this.paymentsService.webhook(request.rawBody, signature);
+    return this.paymentsService.webhook(request.rawBody, signature, eventId);
   }
 }
