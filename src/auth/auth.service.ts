@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PasswordService } from './password.service';
 import { OtpDeliveryService } from './otp-delivery.service';
 import { TokenService } from './token.service';
+import { normalizePhoneNumber } from './phone.util';
 
 interface RegisterLabBody { code?: unknown; name?: unknown; mobile?: unknown; email?: unknown; address?: unknown; subscriptionPlan?: unknown; subscriptionStartAt?: unknown; subscriptionEndAt?: unknown; admin?: { mobile?: unknown; email?: unknown; password?: unknown } }
 interface LoginBody { email?: unknown; password?: unknown }
@@ -39,8 +40,8 @@ export class AuthService {
     const labCode = optionalString(body.code, 'code') ?? this.createLabCode(labName);
     const adminEmail = normalizeEmail(requiredString(admin.email, 'admin.email'));
     const adminPassword = requiredString(admin.password, 'admin.password');
-    const adminMobile = requiredString(admin.mobile, 'admin.mobile');
-    const labMobile = requiredString(body.mobile, 'mobile');
+    const adminMobile = normalizePhoneNumber(admin.mobile);
+    const labMobile = normalizePhoneNumber(body.mobile);
     this.validatePassword(adminPassword);
     const [existingLab, existingUser] = await Promise.all([
       this.prisma.lab.findUnique({ where: { code: labCode } }),

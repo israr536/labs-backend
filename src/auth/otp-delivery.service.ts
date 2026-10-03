@@ -20,6 +20,10 @@ export class OtpDeliveryService {
   }
 
   async sendPasswordResetOtp(mobile: string, otp: string, _expiresAt: Date) {
+    const mode = process.env.OTP_DELIVERY_MODE?.trim().toLowerCase();
+    if (mode === 'local') {
+      return { delivered: false, mode: 'local' as const };
+    }
     return this.sendSms(mobile, otp, 'password reset');
   }
 
