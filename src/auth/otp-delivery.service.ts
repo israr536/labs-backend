@@ -6,6 +6,13 @@ export class OtpDeliveryService {
   constructor(private readonly prisma: PrismaService) {}
 
   async sendSignupOtp(adminEmail: string, otp: string, _expiresAt: Date) {
+    const mode = process.env.OTP_DELIVERY_MODE?.trim().toLowerCase();
+
+    // Temporary production mode: generate/verify OTP locally without calling 2Factor.
+    if (mode === 'local') {
+      return { delivered: false, mode: 'local' as const };
+    }
+
     const pending = await this.prisma.pendingLabRegistration.findFirst({ where: { OR: [{ adminEmail }, { adminUsername: adminEmail }] }, select: { adminMobile: true } });
     const mobile = pending?.adminMobile;
     if (!mobile) throw new ServiceUnavailableException('Signup mobile number was not found. Please start signup again.');
