@@ -1,7 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-
-const INDIA_LOCAL_PATTERN = /^\d{10}$/;
-const E164_PATTERN = /^\+[1-9]\d{7,14}$/;
+import { parsePhoneNumberFromString } from 'libphonenumber-js';
 
 export function normalizePhoneNumber(value: unknown): string {
   const raw = String(value ?? '').trim();
@@ -9,19 +7,22 @@ export function normalizePhoneNumber(value: unknown): string {
 
   const compact = raw.replace(/[\s().-]/g, '');
 
-  // Keep the current Indian signup experience: a 10-digit number is
-  // interpreted as an Indian (+91) mobile number.
-  if (INDIA_LOCAL_PATTERN.test(compact)) {
-    return `+91${compact}`;
-  }
+  // No country selector is required:
+  // - A bare 10-digit number is always treated as an Indian (+91) number.
+  // - Every non-Indian number must include its +country calling code.
+  const phone = /^\d{10}$/.test(compact)
+    ? parsePhoneNumberFromString(compact, 'IN')
+    : compact.startsWith('+')
+      ? parsePhoneNumberFromString(compact)
+      : undefined;
 
-  if (!E164_PATTERN.test(compact)) {
+  if (!phone || !phone.isValid()) {
     throw new BadRequestException(
-      'Enter a valid mobile number with country code, for example +1 415 555 2671',
+      'Enter a valid mobile number. India requires 10 digits; numbers from other countries must include the +country code.',
     );
   }
 
-  return compact;
+  return phone.number;
 }
 
 export function phoneLookupVariants(value: unknown): string[] {
