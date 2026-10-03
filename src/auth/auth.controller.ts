@@ -15,7 +15,12 @@ export class AuthController {
   @Post('register-lab') registerLab(@Body() body: unknown) { return this.authService.registerLab(body ?? {}); }
   @Post('signup/request-otp') requestSignupOtp(@Body() body: unknown) { return this.authService.requestSignupOtp(body ?? {}); }
   @Post('signup/resend-otp') resendSignupOtp(@Body() body: unknown) { const requestId = body && typeof body === 'object' ? (body as { requestId?: unknown }).requestId : undefined; return this.authService.resendSignupOtp(requestId); }
-  @Post('signup/verify-otp') verifySignupOtp(@Body() body: unknown) { return this.authService.verifySignupOtp(body ?? {}); }
+  @Post('signup/verify-otp')
+  async verifySignupOtp(@Body() body: unknown, @Res({ passthrough: true }) response: Response) {
+    const result = await this.authService.verifySignupOtp(body ?? {});
+    this.setRefreshCookie(response, result.refreshToken);
+    return this.withoutRefreshToken(result);
+  }
 
   @Post('forgot-password/request-otp') requestPasswordResetOtp(@Body() body: unknown) {
     const mobile = body && typeof body === 'object' ? (body as { mobile?: unknown }).mobile : undefined;
