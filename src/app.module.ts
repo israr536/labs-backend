@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module';
 import { AccessPolicyInterceptor } from './auth/access-policy.interceptor';
 import { CriticalResultsModule } from './critical-results/critical-results.module';
 import { ContactModule } from './contact/contact.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { FinalReportsModule } from './final-reports/final-reports.module';
 import { LabsModule } from './labs/labs.module';
@@ -40,6 +41,7 @@ import { UsersModule } from './users/users.module';
     FinalReportsModule,
     CriticalResultsModule,
     ContactModule,
+    AnalyticsModule,
     DashboardModule,
   ],
   controllers: [AppController],
