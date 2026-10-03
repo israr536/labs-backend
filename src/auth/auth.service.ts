@@ -19,7 +19,7 @@ interface RefreshBody { refreshToken?: unknown }
 interface RequestSignupOtpBody extends RegisterLabBody {}
 interface VerifySignupOtpBody { requestId?: unknown; otp?: unknown }
 const MIN_PASSWORD_LENGTH = 8;
-const TRIAL_DAYS = 14;
+const TRIAL_DAYS = 30;
 const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
 
@@ -124,7 +124,7 @@ export class AuthService {
       await tx.pendingLabRegistration.delete({ where: { id: pending.id } });
       return { lab, user };
     });
-    return { success: true, lab: result.lab, user: this.safeUser(result.user), enabledTestCount: 0, message: `Signup completed. Your ${TRIAL_DAYS}-day trial is active. All active catalog tests are available by default; lab-specific copies are created only when needed.` };
+    return { success: true, lab: result.lab, user: this.safeUser(result.user), ...(await this.createTokens(result.user)), enabledTestCount: 0, message: `Signup completed. Your ${TRIAL_DAYS}-day trial is active. All active catalog tests are available by default; lab-specific copies are created only when needed.` };
   }
 
   async login(body: LoginBody) {
