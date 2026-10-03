@@ -71,7 +71,13 @@ export class AuthService {
 
     try {
       const delivery = await this.otpDelivery.sendSignupOtp(adminEmail, otp, expiresAt);
-      return { requestId: pending.id, expiresAt: pending.expiresAt, delivery: delivery.mode, ...(process.env.NODE_ENV === 'production' ? {} : { devOtp: otp }) };
+      const otpMode = process.env.OTP_DELIVERY_MODE?.trim().toLowerCase();
+      return {
+        requestId: pending.id,
+        expiresAt: pending.expiresAt,
+        delivery: delivery.mode,
+        ...(otpMode === 'local' || process.env.NODE_ENV !== 'production' ? { devOtp: otp } : {}),
+      };
     } catch (error) {
       await this.prisma.pendingLabRegistration.delete({ where: { id: pending.id } }).catch(() => undefined);
       throw error;
@@ -94,7 +100,13 @@ export class AuthService {
     await this.prisma.pendingLabRegistration.update({ where: { id: pending.id }, data: { otpHash: this.passwordService.hash(otp), expiresAt, attempts: 0 } });
     try {
       const delivery = await this.otpDelivery.sendSignupOtp(pending.adminEmail ?? pending.adminUsername, otp, expiresAt);
-      return { requestId: pending.id, expiresAt, delivery: delivery.mode, ...(process.env.NODE_ENV === 'production' ? {} : { devOtp: otp }) };
+      const otpMode = process.env.OTP_DELIVERY_MODE?.trim().toLowerCase();
+      return {
+        requestId: pending.id,
+        expiresAt,
+        delivery: delivery.mode,
+        ...(otpMode === 'local' || process.env.NODE_ENV !== 'production' ? { devOtp: otp } : {}),
+      };
     } catch (error) {
       throw error;
     }
