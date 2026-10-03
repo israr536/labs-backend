@@ -533,6 +533,17 @@ model PendingLabRegistration {
   @@index([expiresAt])
 }
 
+model FunnelEvent {
+  id String @id @default(uuid())
+  sessionId String
+  event String
+  path String?
+  metadata Json?
+  createdAt DateTime @default(now())
+  @@index([sessionId, createdAt])
+  @@index([event, createdAt])
+}
+
 model ContactInquiry {
   id        String   @id @default(uuid())
   name      String
